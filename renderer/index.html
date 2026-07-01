@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'"
+    />
+    <title>Kopia Desk</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar" aria-label="Resumen del sistema">
+        <div>
+          <p class="eyebrow">Backup incremental</p>
+          <h1>Kopia Desk</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-grid">
+            <div>
+              <span id="sourceCount">0</span>
+              <small>carpetas</small>
+            </div>
+            <div>
+              <span id="changeCount">0</span>
+              <small>cambios</small>
+            </div>
+            <div>
+              <span id="copiedCount">0</span>
+              <small>copiados</small>
+            </div>
+          </div>
+          <button id="themeToggle" class="ghost theme-toggle" type="button">Tema oscuro</button>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="sidebar" aria-label="Controles">
+          <div class="brand-panel">
+            <img class="app-logo" src="../assets/Kopia_Desk.png" alt="Logo de Kopia Desk" />
+            <div>
+              <h2>Copias incrementales</h2>
+              <p>Selecciona carpetas, escanea diferencias y decide qué se copia al destino.</p>
+            </div>
+          </div>
+
+          <div class="control-block">
+            <h3>Origen</h3>
+            <button id="addSourceBtn" class="primary">+ Añadir carpeta</button>
+            <div id="quickFolders" class="quick-folders"></div>
+            <div id="sourcesList" class="list empty">Sin carpetas seleccionadas</div>
+          </div>
+
+          <div class="control-block">
+            <h3>Destino</h3>
+            <select id="destinationSelect" class="destination-select" aria-label="Disco destino">
+              <option value="">Buscando discos...</option>
+            </select>
+            <button id="refreshDrivesBtn" class="secondary">Actualizar discos</button>
+            <div id="destinationLabel" class="destination">Selecciona donde guardar</div>
+            <p class="hint">
+              En "Backup" es donde se guarda la copia. En "Comparar" y "Restaurar" es el
+              disco que ya tiene tu backup.
+            </p>
+          </div>
+
+          <div class="control-block">
+            <h3>Opciones</h3>
+            <label class="toggle">
+              <input id="versioningToggle" type="checkbox" checked />
+              <span>Guardar versiones de cambiados (comprimidas)</span>
+            </label>
+            <label class="toggle">
+              <input id="hashToggle" type="checkbox" />
+              <span>Verificación profunda (hash SHA-256 completo)</span>
+            </label>
+            <label class="toggle">
+              <input id="dedupToggle" type="checkbox" />
+              <span>Deduplicar contenido (ahorra espacio)</span>
+            </label>
+            <div id="driveInfo" class="hint"></div>
+          </div>
+
+          <div class="actions">
+            <button id="scanBtn" class="primary">Escanear cambios</button>
+            <button id="backupBtn" disabled>Copiar aceptados</button>
+          </div>
+        </aside>
+
+        <section class="main-panel" aria-label="Cambios detectados">
+          <div class="panel-head">
+            <div class="tab-bar">
+              <button id="tabBackup" class="tab active" data-tab="backup">Backup</button>
+              <button id="tabCompare" class="tab" data-tab="compare">Comparar</button>
+              <button id="tabRestoreFull" class="tab" data-tab="restore-full">Restaurar</button>
+            </div>
+            <div id="spaceInfo" class="space-info"></div>
+          </div>
+
+          <div id="spaceWarning" class="warning" hidden></div>
+
+          <!-- Barra de progreso -->
+          <div id="progressContainer" class="progress-container" hidden>
+            <div class="progress-header">
+              <span id="progressPhase">Escaneando...</span>
+              <span id="progressPercent">0%</span>
+            </div>
+            <div class="progress-bar-track">
+              <div id="progressBar" class="progress-bar-fill"></div>
+            </div>
+            <div id="progressDetail" class="progress-detail"></div>
+          </div>
+
+          <!-- Vista backup -->
+          <div id="backupView">
+            <div id="changesView" class="changes-view empty-state">
+              <h3>Listo para escanear</h3>
+              <p>Agrega una o más carpetas, elige destino y ejecuta el escaneo.</p>
+            </div>
+          </div>
+
+          <!-- Vista comparar: ver qué falta contra una carpeta local existente -->
+          <div id="compareView" hidden>
+            <div class="restore-preview-block">
+              <h3>Elige qué comparar</h3>
+              <div id="comparePreview" class="list empty">Selecciona un disco con backup.</div>
+              <button id="compareBtn" class="primary restore-compare-btn" type="button" disabled>
+                Comparar seleccionados
+              </button>
+            </div>
+            <div id="compareResults" class="changes-view empty-state">
+              <h3>Resultado de la comparación</h3>
+              <p>Marca una o más carpetas arriba, confirma su ubicación local y compara.</p>
+            </div>
+          </div>
+
+          <!-- Vista restaurar: traer una carpeta completa del backup a donde elijas,
+               sin depender de que exista (o sea la misma) la carpeta/usuario original -->
+          <div id="restoreFullView" hidden>
+            <div class="restore-preview-block">
+              <h3>Elige qué restaurar</h3>
+              <p class="hint">
+                Restaura el contenido completo de una carpeta del backup a cualquier
+                ubicación que elijas — útil si formateaste el PC o cambiaste de usuario
+                y ya no existe la carpeta original.
+              </p>
+              <div id="restoreFullList" class="list empty">Selecciona un disco con backup.</div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="log-panel" aria-label="Registro">
+        <div class="panel-head compact">
+          <h2>Registro</h2>
+          <button id="clearHistoryBtn" class="ghost">Borrar historial local</button>
+        </div>
+        <ol id="logList"></ol>
+      </section>
+    </main>
+
+    <template id="folderTemplate">
+      <article class="folder-card">
+        <header>
+          <div>
+            <h3></h3>
+            <p></p>
+          </div>
+          <div class="folder-stats"></div>
+        </header>
+        <div class="decision-row">
+          <label><input type="checkbox" data-kind="new" checked /> Nuevos</label>
+          <label><input type="checkbox" data-kind="changed" checked /> Cambiados</label>
+          <label><input type="checkbox" data-kind="missing" /> Sólo registrar eliminados</label>
+        </div>
+        <div class="file-groups"></div>
+      </article>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
