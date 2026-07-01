@@ -492,7 +492,7 @@ ipcMain.handle("restore:scan", async (event, backupDrive, sourceName, localFolde
   }
 
   const backupDir = path.join(backupDrive, BACKUP_ROOT, safeName(sourceName));
-  const localFiles = scanDirectoryRecursive(localFolderPath, "", compileExcludePatterns(DEFAULT_EXCLUDES));
+  const localFiles = await scanDirectoryRecursive(localFolderPath, "", compileExcludePatterns(DEFAULT_EXCLUDES));
   const missing = [];
   const total = Object.keys(manifest).length;
   let checked = 0;

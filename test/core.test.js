@@ -101,7 +101,7 @@ test("DEFAULT_EXCLUDES incluye las exclusiones documentadas en el README", () =>
 
 // --- scanDirectoryRecursive ---------------------------------------------------
 
-test("scanDirectoryRecursive encuentra archivos anidados y aplica exclusiones", (t) => {
+test("scanDirectoryRecursive encuentra archivos anidados y aplica exclusiones", async (t) => {
   const dir = makeTempDir();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -113,18 +113,18 @@ test("scanDirectoryRecursive encuentra archivos anidados y aplica exclusiones", 
   fs.writeFileSync(path.join(dir, "node_modules", "c.txt"), "ignorar también");
 
   const compiled = compileExcludePatterns(DEFAULT_EXCLUDES);
-  const result = scanDirectoryRecursive(dir, "", compiled);
+  const result = await scanDirectoryRecursive(dir, "", compiled);
 
   assert.deepEqual(Object.keys(result).sort(), ["a.txt", "sub/b.txt"]);
   assert.equal(result["a.txt"].size, 4);
   assert.equal(result["sub/b.txt"].fullPath, path.join(dir, "sub", "b.txt"));
 });
 
-test("scanDirectoryRecursive devuelve mapa vacío para una carpeta vacía", (t) => {
+test("scanDirectoryRecursive devuelve mapa vacío para una carpeta vacía", async (t) => {
   const dir = makeTempDir();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-  const result = scanDirectoryRecursive(dir, "", []);
+  const result = await scanDirectoryRecursive(dir, "", []);
   assert.deepEqual(result, {});
 });
 
