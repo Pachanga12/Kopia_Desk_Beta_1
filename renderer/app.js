@@ -814,6 +814,27 @@ async function backupAll() {
 
   const dedup = els.dedupToggle.checked;
 
+  // Concurrencia: se calcula una sola vez para toda la corrida (antes se
+  // repetía por cada carpeta de origen, lanzando PowerShell de más — el
+  // disco destino y su tipo no cambian entre carpetas de la misma corrida).
+  const allSelectedFiles = state.comparisons.flatMap((c) => [
+    ...(c.decisions.new ? c.newFiles : []),
+    ...(c.decisions.changed ? c.changedFiles : []),
+  ]);
+  const overallAvgSize = allSelectedFiles.length
+    ? allSelectedFiles.reduce((t, f) => t + f.size, 0) / allSelectedFiles.length
+    : 0;
+  let concurrency = 3;
+  try {
+    const plan = await window.kopiaAPI.planConcurrency(state.destination.root, overallAvgSize);
+    concurrency = plan.concurrency;
+    els.driveInfo.textContent =
+      "Disco " + (plan.driveInfo.mediaType || "desconocido") +
+      " (" + (plan.driveInfo.busType || "?") + ") — concurrencia: " + plan.concurrency;
+  } catch {
+    // se usa el valor por defecto
+  }
+
   try {
     for (const comparison of state.comparisons) {
       const selected = [
@@ -855,19 +876,6 @@ async function backupAll() {
       }
 
       if (tasks.length) {
-        const totalBytes = selected.reduce((t, f) => t + f.size, 0);
-        const avgSize = selected.length ? totalBytes / selected.length : 0;
-        let concurrency = 3;
-        try {
-          const plan = await window.kopiaAPI.planConcurrency(state.destination.root, avgSize);
-          concurrency = plan.concurrency;
-          els.driveInfo.textContent =
-            "Disco " + (plan.driveInfo.mediaType || "desconocido") +
-            " (" + (plan.driveInfo.busType || "?") + ") — concurrencia: " + plan.concurrency;
-        } catch {
-          // se usa el valor por defecto
-        }
-
         const result = await window.kopiaAPI.backupCopyFiles(tasks, { dedup, concurrency });
         totalCopied += result.copied;
         totalDeduped += result.deduped || 0;
