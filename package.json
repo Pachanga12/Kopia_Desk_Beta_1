@@ -5,6 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test",
     "build": "electron-builder --win"
   },
   "author": "Kopia Desk",
@@ -23,11 +24,9 @@
     "files": [
       "main.js",
       "preload.js",
+      "lib/**/*",
       "renderer/**/*",
       "assets/**/*"
     ]
-  },
-  "allowScripts": {
-    "electron@35.7.5": true
   }
 }

@@ -15,6 +15,8 @@ cambió, y permite restaurar archivos que falten en el PC.
 Kopia_Desk_Beta_1/
 ├── main.js                  ← Proceso principal de Electron (Node.js, acceso total al SO)
 ├── preload.js               ← Puente seguro entre main y la interfaz
+├── lib/
+│   └── core.js               ← Lógica de escaneo/hashing/rutas seguras, testeable sin Electron
 ├── package.json             ← Dependencias y configuración del empaquetado
 ├── assets/
 │   └── Kopia_Desk.png       ← Icono de la aplicación
@@ -22,6 +24,8 @@ Kopia_Desk_Beta_1/
 │   ├── index.html           ← Estructura HTML de la interfaz
 │   ├── app.js               ← Lógica de la interfaz (sin acceso a Node)
 │   └── styles.css           ← Estilos visuales
+├── test/
+│   └── core.test.js         ← Tests de lib/core.js (node --test)
 └── docs/
     └── arquitectura.md      ← Este archivo
 ```
@@ -33,7 +37,10 @@ Kopia_Desk_Beta_1/
 ### `main.js` — Proceso principal
 
 Corre en Node.js con acceso completo al sistema operativo. Es el único que puede
-leer/escribir archivos, ejecutar comandos, y abrir ventanas.
+leer/escribir archivos, ejecutar comandos, y abrir ventanas. La lógica de
+escaneo, hashing, exclusiones, rutas seguras y detección de disco vive en
+`lib/core.js` (ver más abajo); `main.js` sólo la importa y expone cada función
+como canal IPC.
 
 **Responsabilidades:**
 - Crear la ventana principal de Electron (`BrowserWindow`)
@@ -84,6 +91,32 @@ leer/escribir archivos, ejecutar comandos, y abrir ventanas.
 
 ---
 
+### `lib/core.js` — Lógica de escaneo/hashing/disco (testeable)
+
+Módulo CommonJS sin dependencias de Electron, `require`-eable directamente
+desde `node --test`. Contiene las funciones puras y de E/S reutilizadas por
+`main.js`:
+
+- `safeName`, `safePath` — sanitización de nombres y protección contra path
+  traversal.
+- `compileExcludePatterns`, `isExcluded`, `DEFAULT_EXCLUDES` — filtros de
+  exclusión.
+- `scanDirectoryRecursive` — escaneo recursivo de carpetas.
+- `hashFileAsync`, `quickHashFile` — hash completo (stream) y hash rápido
+  (cabecera+cola). `quickHashFile` usa `fs.promises` (E/S asíncrona) en vez de
+  `fs.openSync`/`readSync`, para no bloquear el hilo del proceso principal
+  mientras se calculan hashes de muchos archivos.
+- `listDrives`, `detectDriveType` — detección de discos y su tipo (SSD/HDD/USB)
+  vía PowerShell, con `execFile` asíncrono en vez de `execFileSync`.
+- `pickConcurrency` — heurística de concurrencia según tipo de disco y tamaño
+  promedio de archivo.
+- `hideFolder` — aplica atributos oculto+sistema a una carpeta.
+
+`main.js` sólo importa este módulo y conecta cada función a su canal IPC; no
+duplica la lógica.
+
+---
+
 ### `preload.js` — Puente seguro (contextBridge)
 
 Corre en un contexto intermedio con acceso limitado. Expone `window.kopiaAPI` a la
@@ -115,7 +148,9 @@ principal exclusivamente a través de `window.kopiaAPI`.
 - Gestionar el estado de la aplicación en memoria (`state`)
 - Mostrar y actualizar los elementos del DOM
 - Orquestar el flujo de backup:
-  1. Escanear carpetas origen
+  1. Escanear carpetas origen (cada una en su propio try/catch: si una falla,
+     p. ej. un origen desconectado, las demás igual se muestran en vez de
+     perderse todas)
   2. Cargar manifiestos anteriores
   3. Calcular hashes si está activada la opción
   4. Comparar con manifiestos para detectar nuevos/cambiados/eliminados
@@ -123,6 +158,9 @@ principal exclusivamente a través de `window.kopiaAPI`.
   6. Actualizar manifiestos y guardar registro
 - Orquestar el flujo de restauración
 - Persistir configuración entre sesiones
+- Desambiguar automáticamente (`uniqueSourceName`) el nombre de una carpeta
+  origen si coincide con el de otra ya agregada, para que no compartan
+  manifiesto ni carpeta de backup en destino (ver Seguridad)
 
 **Estado principal (`state`):**
 
@@ -246,11 +284,20 @@ D:\KopiaDesk_Backup\
   copia, la próxima vez que se seleccione ese destino (`journal:check`) se
   eliminan los archivos que quedaron a medio escribir, evitando que un backup
   parcial se confunda con uno completo.
+- **Sin colisión de nombres entre carpetas origen**: el manifiesto y la
+  carpeta de backup de cada origen se nombran con `safeName(source.name)`. Si
+  dos carpetas distintas (p. ej. `C:\ProyectoA\Backup` y `D:\ProyectoB\Backup`)
+  sanearían al mismo nombre, `uniqueSourceName()` en `app.js` le agrega a la
+  segunda la carpeta padre o un sufijo numérico antes de agregarla, para que
+  no terminen mezclando su historial de nuevos/cambiados/eliminados en el
+  mismo manifiesto.
 
 ---
 
 ## Notas de desarrollo
 
+- `npm test` corre la suite de `test/core.test.js` con el test runner nativo
+  de Node (`node --test`) contra `lib/core.js`; no requiere Electron.
 - Para construir el instalador en Windows, electron-builder necesita el paquete
   `winCodeSign` en su caché. Si falla con error de symlinks, copiar el directorio
   extraído manualmente a:
