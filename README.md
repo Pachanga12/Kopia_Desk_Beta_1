@@ -9,12 +9,23 @@ npm install
 npm start
 ```
 
+## Tests
+
+La lógica de escaneo, hashing, exclusiones y rutas seguras vive en `lib/core.js`
+para poder testearla sin levantar Electron:
+
+```powershell
+npm test
+```
+
 ## Qué hace
 
 - Selección de carpetas origen mediante diálogo nativo de Windows, o con un
   clic desde los accesos rápidos a las carpetas típicas del usuario (Imágenes,
   Documentos, Descargas, Música, Videos, Escritorio — sólo se muestran las que
-  existen en el equipo).
+  existen en el equipo). Si dos carpetas distintas terminan con el mismo
+  nombre, la segunda se renombra automáticamente (agregando la carpeta padre o
+  un número) para que no compartan manifiesto ni carpeta de backup.
 - Detección automática de discos/USB conectados con espacio disponible.
 - Escaneo recursivo de archivos con barra de progreso.
 - Filtros de exclusión configurables (por defecto ignora `Thumbs.db`, `desktop.ini`,
@@ -65,6 +76,7 @@ D:\KopiaDesk_Backup\
 - Electron (proceso principal + renderer aislado con contextBridge)
 - Node.js (fs, crypto, child_process)
 - HTML/CSS/JS vanilla (sin frameworks)
+- `node --test` para la suite de tests de `lib/core.js`
 
 ## Empaquetar como instalador
 

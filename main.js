@@ -3,23 +3,24 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const crypto = require("crypto");
 const zlib = require("zlib");
-const { execFileSync } = require("child_process");
+const {
+  DEFAULT_EXCLUDES,
+  safeName,
+  safePath,
+  compileExcludePatterns,
+  scanDirectoryRecursive,
+  hashFileAsync,
+  quickHashFile,
+  listDrives,
+  detectDriveType,
+  pickConcurrency,
+  hideFolder,
+} = require("./lib/core.js");
 
 const BACKUP_ROOT = "KopiaDesk_Backup";
 const METADATA_DIR = ".kopia-data";
 const BACKUP_CONCURRENCY = 3;
-const DEFAULT_EXCLUDES = [
-  "Thumbs.db",
-  "desktop.ini",
-  "$RECYCLE.BIN",
-  "System Volume Information",
-  ".git",
-  "node_modules",
-  "*.tmp",
-  "~$*",
-];
 
 const QUICK_FOLDERS = [
   { key: "pictures", name: "Imágenes" },
@@ -52,46 +53,6 @@ function createWindow() {
 
 app.whenReady().then(createWindow);
 app.on("window-all-closed", () => app.quit());
-
-function safePath(root, relativePath) {
-  if (!relativePath || typeof relativePath !== "string") {
-    throw new Error("Ruta no válida.");
-  }
-  if (relativePath.includes("\0")) {
-    throw new Error("Ruta contiene caracteres nulos.");
-  }
-  const resolved = path.resolve(root, relativePath);
-  let normalizedRoot = path.resolve(root);
-  if (!normalizedRoot.endsWith(path.sep)) normalizedRoot += path.sep;
-  if (!resolved.startsWith(normalizedRoot) && resolved !== path.resolve(root)) {
-    throw new Error("Ruta fuera del disco destino.");
-  }
-  return resolved;
-}
-
-function listDrives() {
-  try {
-    const raw = execFileSync(
-      "powershell.exe",
-      ["-NoProfile", "-Command", "Get-Volume | Where-Object { $_.DriveLetter } | Select-Object DriveLetter, FileSystemLabel, SizeRemaining, Size | ConvertTo-Json -Compress"],
-      { encoding: "utf-8", timeout: 10000 }
-    );
-    const volumes = JSON.parse(raw);
-    const list = Array.isArray(volumes) ? volumes : [volumes];
-    const systemDrive = (process.env.SystemDrive || "C:").toUpperCase();
-    return list
-      .filter((v) => v.DriveLetter)
-      .map((v) => ({
-        root: v.DriveLetter + ":\\",
-        label: v.FileSystemLabel || "",
-        free: v.SizeRemaining || 0,
-        total: v.Size || 0,
-        isSystemDrive: (v.DriveLetter + ":").toUpperCase() === systemDrive,
-      }));
-  } catch {
-    return [];
-  }
-}
 
 ipcMain.handle("drives:list", () => listDrives());
 
@@ -133,60 +94,7 @@ ipcMain.handle("folders:quick-list", () => {
 
 // --- Filtros de exclusión ---------------------------------------------
 
-function compileExcludePatterns(patterns) {
-  return patterns
-    .filter((p) => typeof p === "string" && p.trim())
-    .map((p) => {
-      const escaped = p
-        .trim()
-        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-        .replace(/\*/g, ".*")
-        .replace(/\?/g, ".");
-      return new RegExp("^" + escaped + "$", "i");
-    });
-}
-
-function isExcluded(name, compiledPatterns) {
-  return compiledPatterns.some((re) => re.test(name));
-}
-
 ipcMain.handle("config:default-excludes", () => DEFAULT_EXCLUDES);
-
-function scanDirectoryRecursive(dirPath, basePath, compiledExcludes) {
-  const files = {};
-  let entries;
-  try {
-    entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  } catch (err) {
-    if (err.code === "EACCES") return files;
-    throw err;
-  }
-
-  for (const entry of entries) {
-    if (isExcluded(entry.name, compiledExcludes)) continue;
-    const fullPath = path.join(dirPath, entry.name);
-    const relativePath = basePath ? basePath + "/" + entry.name : entry.name;
-
-    if (entry.isDirectory()) {
-      Object.assign(files, scanDirectoryRecursive(fullPath, relativePath, compiledExcludes));
-    } else if (entry.isFile()) {
-      try {
-        const stat = fs.statSync(fullPath);
-        files[relativePath] = {
-          name: entry.name,
-          path: relativePath,
-          fullPath,
-          size: stat.size,
-          lastModified: stat.mtimeMs,
-          hash: null,
-        };
-      } catch {
-        // skip inaccessible files
-      }
-    }
-  }
-  return files;
-}
 
 ipcMain.handle("fs:scan-directory", (event, dirPath, excludePatterns) => {
   if (!fs.existsSync(dirPath)) throw new Error("La carpeta no existe: " + dirPath);
@@ -196,45 +104,7 @@ ipcMain.handle("fs:scan-directory", (event, dirPath, excludePatterns) => {
 
 // --- Hashing -------------------------------------------------------------
 
-function hashFileAsync(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash("sha256");
-    const stream = fs.createReadStream(filePath);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("end", () => resolve(hash.digest("hex")));
-    stream.on("error", reject);
-  });
-}
-
 ipcMain.handle("fs:hash-file", async (_event, filePath) => hashFileAsync(filePath));
-
-// Hash "rápido": sólo lee los primeros y últimos 64 KB en vez del archivo completo.
-// Sirve para confirmar si un archivo realmente cambió cuando coincide el tamaño
-// pero difiere la fecha de modificación (p. ej. un antivirus o sincronizador que
-// sólo "toca" el archivo), sin pagar el costo de un SHA-256 completo.
-function quickHashFile(fullPath, size) {
-  const CHUNK = 65536;
-  const fd = fs.openSync(fullPath, "r");
-  try {
-    const hash = crypto.createHash("sha256");
-    hash.update(String(size));
-    if (size > 0) {
-      const headBuf = Buffer.alloc(Math.min(CHUNK, size));
-      const headBytes = fs.readSync(fd, headBuf, 0, headBuf.length, 0);
-      hash.update(headBuf.subarray(0, headBytes));
-
-      if (size > CHUNK) {
-        const tailSize = Math.min(CHUNK, size);
-        const tailBuf = Buffer.alloc(tailSize);
-        const tailBytes = fs.readSync(fd, tailBuf, 0, tailSize, size - tailSize);
-        hash.update(tailBuf.subarray(0, tailBytes));
-      }
-    }
-    return hash.digest("hex");
-  } finally {
-    fs.closeSync(fd);
-  }
-}
 
 ipcMain.handle("fs:quick-hash", (_event, filePath, size) => quickHashFile(filePath, size));
 
@@ -261,16 +131,6 @@ ipcMain.handle("fs:file-exists", async (_event, filePath) => {
   return fs.existsSync(filePath);
 });
 
-function hideFolder(folderPath) {
-  if (!fs.existsSync(folderPath)) return false;
-  try {
-    execFileSync("attrib", ["+h", "+s", folderPath], { timeout: 5000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 ipcMain.handle("fs:hide-folder", async (_event, folderPath) => {
   return hideFolder(folderPath);
 });
@@ -281,10 +141,6 @@ function manifestDir(destRoot) {
 
 function manifestFilePath(destRoot, sourceName) {
   return path.join(manifestDir(destRoot), safeName(sourceName) + ".json");
-}
-
-function safeName(name) {
-  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 120) || "carpeta";
 }
 
 ipcMain.handle("manifest:load", async (_event, destRoot, sourceName) => {
@@ -308,7 +164,7 @@ ipcMain.handle("manifest:save", async (_event, destRoot, sourceName, manifest) =
   }
 
   fs.writeFileSync(fp, JSON.stringify(manifest, null, 2), "utf-8");
-  hideFolder(path.join(destRoot, BACKUP_ROOT, METADATA_DIR));
+  await hideFolder(path.join(destRoot, BACKUP_ROOT, METADATA_DIR));
   return { ok: true };
 });
 
@@ -490,41 +346,8 @@ ipcMain.handle("journal:check", async (_event, destRoot) => {
 
 // --- Detección de tipo de disco (para concurrencia adaptativa) ------------
 
-function detectDriveType(driveRoot) {
-  const letterMatch = /^([A-Za-z])/.exec(String(driveRoot || ""));
-  if (!letterMatch) return { mediaType: "Unknown", busType: "Unknown" };
-  const letter = letterMatch[1];
-
-  try {
-    const script =
-      "$ErrorActionPreference='Stop'; " +
-      `$part = Get-Partition -DriveLetter '${letter}'; ` +
-      "$disk = Get-Disk -Number $part.DiskNumber; " +
-      "$phys = Get-PhysicalDisk -DeviceNumber $disk.Number; " +
-      "[PSCustomObject]@{ MediaType = [string]$phys.MediaType; BusType = [string]$phys.BusType } | ConvertTo-Json -Compress";
-    const raw = execFileSync("powershell.exe", ["-NoProfile", "-Command", script], {
-      encoding: "utf-8",
-      timeout: 8000,
-    });
-    const info = JSON.parse(raw);
-    return { mediaType: info.MediaType || "Unknown", busType: info.BusType || "Unknown" };
-  } catch {
-    return { mediaType: "Unknown", busType: "Unknown" };
-  }
-}
-
-function pickConcurrency(driveInfo, avgFileSize) {
-  const manySmallFiles = avgFileSize > 0 && avgFileSize < 2 * 1024 * 1024;
-  const isSpinning = driveInfo.mediaType === "HDD";
-  const isSSD = driveInfo.mediaType === "SSD" || driveInfo.busType === "NVMe";
-
-  if (isSpinning) return manySmallFiles ? 2 : 1;
-  if (isSSD) return manySmallFiles ? 8 : 4;
-  return manySmallFiles ? 4 : 2;
-}
-
-ipcMain.handle("backup:plan-concurrency", (_event, driveRoot, avgFileSize) => {
-  const driveInfo = detectDriveType(driveRoot);
+ipcMain.handle("backup:plan-concurrency", async (_event, driveRoot, avgFileSize) => {
+  const driveInfo = await detectDriveType(driveRoot);
   return { concurrency: pickConcurrency(driveInfo, avgFileSize), driveInfo };
 });
 

@@ -1,0 +1,214 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+const {
+  DEFAULT_EXCLUDES,
+  safeName,
+  safePath,
+  compileExcludePatterns,
+  isExcluded,
+  scanDirectoryRecursive,
+  hashFileAsync,
+  quickHashFile,
+  pickConcurrency,
+} = require("../lib/core.js");
+
+function makeTempDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "kopia-core-test-"));
+}
+
+// --- safeName --------------------------------------------------------------
+
+test("safeName reemplaza caracteres inválidos de nombres de archivo", () => {
+  assert.equal(safeName('Fotos:2023<>|?*"'), "Fotos_2023______");
+});
+
+test("safeName trunca a 120 caracteres", () => {
+  const long = "a".repeat(200);
+  assert.equal(safeName(long).length, 120);
+});
+
+test("safeName nunca devuelve string vacío", () => {
+  assert.equal(safeName(""), "carpeta");
+});
+
+test("safeName reemplaza barras pero no las considera vacías", () => {
+  assert.equal(safeName("///"), "___");
+});
+
+// --- safePath ----------------------------------------------------------------
+
+test("safePath resuelve una ruta relativa dentro del root", () => {
+  const root = path.resolve("D:/KopiaDesk_Backup");
+  const resolved = safePath(root, "Fotos/img.jpg");
+  assert.equal(resolved, path.join(root, "Fotos", "img.jpg"));
+});
+
+test("safePath permite que la ruta resuelta sea exactamente el root", () => {
+  const root = path.resolve("D:/KopiaDesk_Backup");
+  assert.equal(safePath(root, "."), path.resolve(root));
+});
+
+test("safePath rechaza un path traversal fuera del root", () => {
+  const root = path.resolve("D:/KopiaDesk_Backup");
+  assert.throws(() => safePath(root, "../../Windows/System32"), /fuera del disco destino/);
+});
+
+test("safePath rechaza una carpeta hermana con el mismo prefijo de nombre", () => {
+  // D:\Backup2 no debe colarse por empezar igual que D:\Backup (sin separador de por medio)
+  const root = path.resolve("D:/Backup");
+  assert.throws(() => safePath(root, "../Backup2/evil.txt"), /fuera del disco destino/);
+});
+
+test("safePath rechaza rutas con bytes nulos", () => {
+  const root = path.resolve("D:/KopiaDesk_Backup");
+  assert.throws(() => safePath(root, "archivo\0.txt"), /caracteres nulos/);
+});
+
+test("safePath rechaza rutas vacías o no-string", () => {
+  const root = path.resolve("D:/KopiaDesk_Backup");
+  assert.throws(() => safePath(root, ""));
+  assert.throws(() => safePath(root, null));
+});
+
+// --- exclusiones -------------------------------------------------------------
+
+test("compileExcludePatterns + isExcluded soportan comodines '*' y '?'", () => {
+  const compiled = compileExcludePatterns(["*.tmp", "~$*", "Thumbs.db"]);
+  assert.equal(isExcluded("archivo.tmp", compiled), true);
+  assert.equal(isExcluded("~$documento.docx", compiled), true);
+  assert.equal(isExcluded("Thumbs.db", compiled), true);
+  assert.equal(isExcluded("thumbs.db", compiled), true); // case-insensitive
+  assert.equal(isExcluded("foto.jpg", compiled), false);
+});
+
+test("compileExcludePatterns ignora patrones vacíos o no-string", () => {
+  const compiled = compileExcludePatterns(["", "   ", null, undefined, "*.log"]);
+  assert.equal(compiled.length, 1);
+  assert.equal(isExcluded("error.log", compiled), true);
+});
+
+test("DEFAULT_EXCLUDES incluye las exclusiones documentadas en el README", () => {
+  for (const pattern of ["Thumbs.db", "desktop.ini", "$RECYCLE.BIN", ".git", "node_modules", "*.tmp"]) {
+    assert.ok(DEFAULT_EXCLUDES.includes(pattern), `falta ${pattern}`);
+  }
+});
+
+// --- scanDirectoryRecursive ---------------------------------------------------
+
+test("scanDirectoryRecursive encuentra archivos anidados y aplica exclusiones", (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  fs.writeFileSync(path.join(dir, "a.txt"), "hola");
+  fs.mkdirSync(path.join(dir, "sub"));
+  fs.writeFileSync(path.join(dir, "sub", "b.txt"), "mundo");
+  fs.writeFileSync(path.join(dir, "Thumbs.db"), "ignorar");
+  fs.mkdirSync(path.join(dir, "node_modules"));
+  fs.writeFileSync(path.join(dir, "node_modules", "c.txt"), "ignorar también");
+
+  const compiled = compileExcludePatterns(DEFAULT_EXCLUDES);
+  const result = scanDirectoryRecursive(dir, "", compiled);
+
+  assert.deepEqual(Object.keys(result).sort(), ["a.txt", "sub/b.txt"]);
+  assert.equal(result["a.txt"].size, 4);
+  assert.equal(result["sub/b.txt"].fullPath, path.join(dir, "sub", "b.txt"));
+});
+
+test("scanDirectoryRecursive devuelve mapa vacío para una carpeta vacía", (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const result = scanDirectoryRecursive(dir, "", []);
+  assert.deepEqual(result, {});
+});
+
+// --- hashing -------------------------------------------------------------------
+
+test("quickHashFile da el mismo hash para el mismo contenido", async (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const fileA = path.join(dir, "a.txt");
+  const fileB = path.join(dir, "b.txt");
+  fs.writeFileSync(fileA, "contenido idéntico");
+  fs.writeFileSync(fileB, "contenido idéntico");
+
+  const hashA = await quickHashFile(fileA, fs.statSync(fileA).size);
+  const hashB = await quickHashFile(fileB, fs.statSync(fileB).size);
+  assert.equal(hashA, hashB);
+});
+
+test("quickHashFile da distinto hash si el contenido difiere", async (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const fileA = path.join(dir, "a.txt");
+  const fileB = path.join(dir, "b.txt");
+  fs.writeFileSync(fileA, "contenido uno");
+  fs.writeFileSync(fileB, "contenido dos");
+
+  const hashA = await quickHashFile(fileA, fs.statSync(fileA).size);
+  const hashB = await quickHashFile(fileB, fs.statSync(fileB).size);
+  assert.notEqual(hashA, hashB);
+});
+
+test("quickHashFile funciona con archivos más grandes que el bloque de 64 KB", async (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const filePath = path.join(dir, "grande.bin");
+  const buf = Buffer.alloc(200 * 1024);
+  buf.fill(1, 0, 65536); // cabecera
+  buf.fill(2, buf.length - 65536); // cola
+  fs.writeFileSync(filePath, buf);
+
+  const hash1 = await quickHashFile(filePath, buf.length);
+
+  // Cambiar sólo el medio del archivo no debería afectar el hash rápido,
+  // ya que sólo lee cabecera+cola — esto documenta la limitación conocida.
+  buf.fill(9, 100000, 100010);
+  fs.writeFileSync(filePath, buf);
+  const hash2 = await quickHashFile(filePath, buf.length);
+
+  assert.equal(hash1, hash2);
+});
+
+test("hashFileAsync calcula un SHA-256 completo y determinista", async (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const filePath = path.join(dir, "archivo.txt");
+  fs.writeFileSync(filePath, "contenido de prueba");
+
+  const hash = await hashFileAsync(filePath);
+  assert.equal(hash, "f3a7a67ab20351ddf47e87ecbf0e5a0868fc0e257d0aea65d018b0405b9a34f3");
+});
+
+// --- pickConcurrency -----------------------------------------------------------
+
+test("pickConcurrency: HDD con muchos archivos chicos usa 2", () => {
+  assert.equal(pickConcurrency({ mediaType: "HDD", busType: "SATA" }, 1024 * 1024), 2);
+});
+
+test("pickConcurrency: HDD con archivos grandes usa 1", () => {
+  assert.equal(pickConcurrency({ mediaType: "HDD", busType: "SATA" }, 50 * 1024 * 1024), 1);
+});
+
+test("pickConcurrency: SSD con archivos chicos usa 8", () => {
+  assert.equal(pickConcurrency({ mediaType: "SSD", busType: "SATA" }, 1024), 8);
+});
+
+test("pickConcurrency: NVMe por busType cuenta como SSD aunque mediaType sea desconocido", () => {
+  assert.equal(pickConcurrency({ mediaType: "Unknown", busType: "NVMe" }, 10 * 1024 * 1024), 4);
+});
+
+test("pickConcurrency: disco desconocido usa valores intermedios", () => {
+  assert.equal(pickConcurrency({ mediaType: "Unknown", busType: "Unknown" }, 1024), 4);
+  assert.equal(pickConcurrency({ mediaType: "Unknown", busType: "Unknown" }, 10 * 1024 * 1024), 2);
+});

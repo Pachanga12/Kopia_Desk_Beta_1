@@ -307,12 +307,48 @@ function renderSources() {
   updateCounts();
 }
 
+// Dos carpetas de origen distintas que terminan en el mismo nombre (p. ej.
+// "C:\ProyectoA\Backup" y "D:\ProyectoB\Backup") sanearían al mismo nombre de
+// manifiesto/carpeta de destino y mezclarían sus historiales de backup entre
+// sí. Se detecta por safeName (la misma sanitización que usa main.js) y se
+// desambigua automáticamente en vez de dejar que colisionen en silencio.
+function uniqueSourceName(candidateName, folderPath) {
+  const collidesWith = (n) =>
+    state.sources.some((s) => s.path !== folderPath && safeName(s.name) === safeName(n));
+
+  if (!collidesWith(candidateName)) return candidateName;
+
+  const parts = folderPath.split(/[\\/]/).filter(Boolean);
+  const parent = parts.length > 1 ? parts[parts.length - 2] : null;
+  if (parent) {
+    const withParent = parent + " - " + candidateName;
+    if (!collidesWith(withParent)) return withParent;
+  }
+
+  let n = 2;
+  let attempt = candidateName + " (" + n + ")";
+  while (collidesWith(attempt)) {
+    n++;
+    attempt = candidateName + " (" + n + ")";
+  }
+  return attempt;
+}
+
 function addFolderToSources(folderPath, displayName) {
-  const name = displayName || folderPath.split(/[\\/]/).pop();
   if (state.sources.some((s) => s.path === folderPath)) {
-    log("La carpeta " + name + " ya estaba seleccionada.");
+    log("La carpeta " + (displayName || folderPath) + " ya estaba seleccionada.");
     return;
   }
+
+  const requestedName = displayName || folderPath.split(/[\\/]/).pop();
+  const name = uniqueSourceName(requestedName, folderPath);
+  if (name !== requestedName) {
+    log(
+      "Ya había una carpeta llamada '" + requestedName + "'; ésta se agregó como '" + name +
+        "' para no mezclar sus backups."
+    );
+  }
+
   state.sources.push({ name, path: folderPath });
   renderSources();
   log("Carpeta añadida: " + name);
@@ -550,53 +586,63 @@ async function scanAll() {
   els.changesView.appendChild(h);
   els.changesView.appendChild(p);
 
+  // Cada carpeta se escanea en su propio try/catch: si una falla (p. ej. un
+  // origen desconectado), las demás igual se muestran en vez de perderse todas
+  // porque una excepción cortaba el loop antes de llegar a renderComparisons().
+  let failures = 0;
   try {
     for (let i = 0; i < state.sources.length; i++) {
       const source = state.sources[i];
-      log("Escaneando " + source.name + "...");
-      showProgress("Escaneando...", i, state.sources.length, source.name);
+      try {
+        log("Escaneando " + source.name + "...");
+        showProgress("Escaneando...", i, state.sources.length, source.name);
 
-      const previous = state.destination
-        ? await window.kopiaAPI.loadManifest(state.destination.root, source.name)
-        : {};
+        const previous = state.destination
+          ? await window.kopiaAPI.loadManifest(state.destination.root, source.name)
+          : {};
 
-      const current = await window.kopiaAPI.scanDirectory(source.path, excludePatterns);
+        const current = await window.kopiaAPI.scanDirectory(source.path, excludePatterns);
 
-      const diff = await compareManifests(current, previous);
+        const diff = await compareManifests(current, previous);
 
-      if (els.hashToggle.checked) {
-        for (const item of diff.changedFiles) {
-          try {
-            item.hash = await window.kopiaAPI.hashFile(item.fullPath);
-          } catch {
-            // skip unhashable files
+        if (els.hashToggle.checked) {
+          for (const item of diff.changedFiles) {
+            try {
+              item.hash = await window.kopiaAPI.hashFile(item.fullPath);
+            } catch {
+              // skip unhashable files
+            }
           }
         }
-      }
 
-      state.comparisons.push({
-        sourceName: source.name,
-        sourcePath: source.path,
-        manifest: current,
-        previousManifest: previous,
-        ...diff,
-        decisions: { new: true, changed: true, missing: false },
-      });
-      log(
-        source.name +
-          ": " +
-          diff.newFiles.length +
-          " nuevos, " +
-          diff.changedFiles.length +
-          " cambiados, " +
-          diff.missingFiles.length +
-          " eliminados."
-      );
+        state.comparisons.push({
+          sourceName: source.name,
+          sourcePath: source.path,
+          manifest: current,
+          previousManifest: previous,
+          ...diff,
+          decisions: { new: true, changed: true, missing: false },
+        });
+        log(
+          source.name +
+            ": " +
+            diff.newFiles.length +
+            " nuevos, " +
+            diff.changedFiles.length +
+            " cambiados, " +
+            diff.missingFiles.length +
+            " eliminados."
+        );
+      } catch (error) {
+        failures++;
+        log("Error escaneando '" + source.name + "': " + error.message + " — se continúa con las demás carpetas.");
+      }
     }
-    renderComparisons();
-  } catch (error) {
-    log("Error en escaneo: " + error.message);
   } finally {
+    renderComparisons();
+    if (failures) {
+      log(failures + " carpeta(s) no se pudieron escanear. Las demás se muestran igual.");
+    }
     setBusy(false);
     hideProgress();
   }
@@ -1202,7 +1248,8 @@ async function loadState() {
     if (settings.sources && settings.sources.length) {
       for (const s of settings.sources) {
         if (!state.sources.some((x) => x.path === s.path)) {
-          state.sources.push(s);
+          const name = uniqueSourceName(s.name, s.path);
+          state.sources.push({ name, path: s.path });
         }
       }
       renderSources();
