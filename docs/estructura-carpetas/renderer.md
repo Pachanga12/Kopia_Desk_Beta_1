@@ -53,10 +53,14 @@ interrumpido.
 ### Copiar (`backupAll`)
 1. Calcula cuántos bytes se van a copiar (`computePlannedBytes`) y **cancela**
    si el disco no tiene espacio suficiente, mostrando el aviso amarillo.
-2. Por cada carpeta: arma la lista de tareas de copia, calcula la concurrencia
-   recomendada según el disco, y llama a `backupCopyFiles` (con la opción de
-   deduplicación) y, si hay versionado, a `backupCopyVersions`.
-3. Guarda el nuevo manifiesto, recuerda la ruta de origen
+2. Calcula la concurrencia recomendada **una sola vez para toda la corrida**
+   (según el disco destino y el tamaño promedio de todos los archivos
+   seleccionados) — evita lanzar PowerShell de más por cada carpeta cuando
+   hay varias carpetas de origen.
+3. Por cada carpeta: arma la lista de tareas de copia y llama a
+   `backupCopyFiles` (con la opción de deduplicación y la concurrencia ya
+   calculada) y, si hay versionado, a `backupCopyVersions`.
+4. Guarda el nuevo manifiesto, recuerda la ruta de origen
    (`rememberSourcePath`) para que restaurar no vuelva a preguntar, y guarda un
    registro de la operación.
 
