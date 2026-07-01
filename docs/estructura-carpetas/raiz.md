@@ -28,7 +28,10 @@ backup. Se usa en cada operación de escritura.
   en expresiones regulares una sola vez por escaneo.
 - `scanDirectoryRecursive()` recorre una carpeta entera, salta lo excluido, y
   devuelve un mapa `{ ruta → {tamaño, fecha, ruta completa} }`. Esto es el
-  "manifiesto" de una carpeta en un momento dado.
+  "manifiesto" de una carpeta en un momento dado. Usa E/S asíncrona
+  (`fs.promises`) en vez de `fs.readdirSync`/`statSync`, para no bloquear el
+  proceso principal — y con él, toda la ventana — mientras escanea carpetas
+  con muchos archivos.
 
 ### 4. Hashing (detectar si un archivo realmente cambió)
 - `hashFileAsync()` calcula el SHA-256 completo de un archivo (lento pero

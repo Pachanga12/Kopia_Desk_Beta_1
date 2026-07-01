@@ -101,7 +101,11 @@ desde `node --test`. Contiene las funciones puras y de E/S reutilizadas por
   traversal.
 - `compileExcludePatterns`, `isExcluded`, `DEFAULT_EXCLUDES` — filtros de
   exclusión.
-- `scanDirectoryRecursive` — escaneo recursivo de carpetas.
+- `scanDirectoryRecursive` — escaneo recursivo de carpetas. Usa `fs.promises`
+  (E/S asíncrona) en vez de `fs.readdirSync`/`statSync`, para no bloquear el
+  proceso principal (y con él, la ventana entera) mientras escanea carpetas con
+  muchos archivos o subcarpetas; procesa las entradas de cada nivel en paralelo
+  con `Promise.all`.
 - `hashFileAsync`, `quickHashFile` — hash completo (stream) y hash rápido
   (cabecera+cola). `quickHashFile` usa `fs.promises` (E/S asíncrona) en vez de
   `fs.openSync`/`readSync`, para no bloquear el hilo del proceso principal
