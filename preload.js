@@ -12,11 +12,6 @@ contextBridge.exposeInMainWorld("kopiaAPI", {
   defaultExcludePatterns: () => ipcRenderer.invoke("config:default-excludes"),
   hashFile: (filePath) => ipcRenderer.invoke("fs:hash-file", filePath),
   quickHashFile: (filePath, size) => ipcRenderer.invoke("fs:quick-hash", filePath, size),
-  copyFile: (src, destRoot, relDest) => ipcRenderer.invoke("fs:copy-file", src, destRoot, relDest),
-  readText: (filePath) => ipcRenderer.invoke("fs:read-text", filePath),
-  writeText: (destRoot, relPath, content) => ipcRenderer.invoke("fs:write-text", destRoot, relPath, content),
-  fileExists: (filePath) => ipcRenderer.invoke("fs:file-exists", filePath),
-  hideFolder: (folderPath) => ipcRenderer.invoke("fs:hide-folder", folderPath),
 
   loadManifest: (destRoot, sourceName) => ipcRenderer.invoke("manifest:load", destRoot, sourceName),
   saveManifest: (destRoot, sourceName, manifest) => ipcRenderer.invoke("manifest:save", destRoot, sourceName, manifest),

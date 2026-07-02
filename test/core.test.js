@@ -16,6 +16,10 @@ const {
   hashFileAsync,
   quickHashFile,
   pickConcurrency,
+  startJournal,
+  appendJournalDone,
+  finishJournal,
+  checkJournals,
 } = require("../lib/core.js");
 
 function makeTempDir() {
@@ -188,6 +192,84 @@ test("hashFileAsync calcula un SHA-256 completo y determinista", async (t) => {
 
   const hash = await hashFileAsync(filePath);
   assert.equal(hash, "f3a7a67ab20351ddf47e87ecbf0e5a0868fc0e257d0aea65d018b0405b9a34f3");
+});
+
+// --- journal ---------------------------------------------------------------------
+
+test("journal: limpia sólo los archivos que quedaron pendientes al interrumpirse", async (t) => {
+  const destRoot = makeTempDir();
+  t.after(() => fs.rmSync(destRoot, { recursive: true, force: true }));
+  const jDir = path.join(destRoot, "journal");
+
+  const tasks = [
+    { relativeDest: "a.txt" },
+    { relativeDest: "sub/b.txt" },
+    { relativeDest: "c.txt" },
+  ];
+  const journalPath = startJournal(jDir, tasks);
+  assert.ok(journalPath);
+
+  // Simular la interrupción: a.txt y sub/b.txt se copiaron completos (y quedaron
+  // registrados como done); c.txt quedó a medias sin registrarse.
+  fs.writeFileSync(path.join(destRoot, "a.txt"), "completo");
+  fs.mkdirSync(path.join(destRoot, "sub"), { recursive: true });
+  fs.writeFileSync(path.join(destRoot, "sub", "b.txt"), "completo");
+  fs.writeFileSync(path.join(destRoot, "c.txt"), "parcial");
+  appendJournalDone(journalPath, "a.txt");
+  appendJournalDone(journalPath, "sub/b.txt");
+
+  const result = checkJournals(jDir, destRoot);
+  assert.equal(result.found, 1);
+  assert.equal(result.filesCleaned, 1);
+  assert.ok(result.lastInterruptedAt);
+
+  assert.ok(fs.existsSync(path.join(destRoot, "a.txt")), "los archivos completos no deben borrarse");
+  assert.ok(fs.existsSync(path.join(destRoot, "sub", "b.txt")), "los archivos completos no deben borrarse");
+  assert.ok(!fs.existsSync(path.join(destRoot, "c.txt")), "el archivo parcial debe limpiarse");
+  assert.equal(fs.readdirSync(jDir).length, 0, "el journal procesado debe eliminarse");
+});
+
+test("journal: startJournal devuelve null si no hay tareas", () => {
+  assert.equal(startJournal(path.join(os.tmpdir(), "no-importa"), []), null);
+});
+
+test("journal: checkJournals sin carpeta de journal no encuentra nada", () => {
+  const result = checkJournals(path.join(os.tmpdir(), "kopia-journal-inexistente"), os.tmpdir());
+  assert.deepEqual(result, { found: 0, filesCleaned: 0, lastInterruptedAt: null });
+});
+
+test("journal: finishJournal elimina el archivo al terminar sin errores", (t) => {
+  const destRoot = makeTempDir();
+  t.after(() => fs.rmSync(destRoot, { recursive: true, force: true }));
+  const jDir = path.join(destRoot, "journal");
+
+  const journalPath = startJournal(jDir, [{ relativeDest: "a.txt" }]);
+  assert.ok(fs.existsSync(journalPath));
+  finishJournal(journalPath);
+  assert.ok(!fs.existsSync(journalPath));
+});
+
+test("journal: sigue entendiendo el formato .json de versiones anteriores", (t) => {
+  const destRoot = makeTempDir();
+  t.after(() => fs.rmSync(destRoot, { recursive: true, force: true }));
+  const jDir = path.join(destRoot, "journal");
+  fs.mkdirSync(jDir, { recursive: true });
+
+  fs.writeFileSync(path.join(destRoot, "viejo.txt"), "parcial");
+  const legacy = {
+    startedAt: "2026-01-01T00:00:00.000Z",
+    entries: [
+      { relativeDest: "viejo.txt", status: "pending" },
+      { relativeDest: "hecho.txt", status: "done" },
+    ],
+  };
+  fs.writeFileSync(path.join(jDir, "backup_legacy.json"), JSON.stringify(legacy));
+
+  const result = checkJournals(jDir, destRoot);
+  assert.equal(result.found, 1);
+  assert.equal(result.filesCleaned, 1);
+  assert.equal(result.lastInterruptedAt, "2026-01-01T00:00:00.000Z");
+  assert.ok(!fs.existsSync(path.join(destRoot, "viejo.txt")));
 });
 
 // --- pickConcurrency -----------------------------------------------------------

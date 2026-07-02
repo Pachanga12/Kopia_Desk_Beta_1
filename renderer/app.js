@@ -123,6 +123,12 @@ function safeName(name) {
   return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 120) || "carpeta";
 }
 
+// Une la raíz del disco destino (p. ej. "D:\") con una ruta relativa del
+// backup sin duplicar separadores.
+function joinDestPath(root, relativePath) {
+  return root.replace(/[\\/]+$/, "") + "\\" + relativePath;
+}
+
 function getExcludePatterns() {
   return state.excludePatterns;
 }
@@ -858,6 +864,9 @@ async function backupAll() {
           relativeDest: destRelative,
         });
 
+        // Versionado: se comprime el archivo que YA está en el backup (la
+        // versión anterior) antes de que la copia nueva lo sobrescriba. Por eso
+        // el origen es la ruta dentro del backup, no el archivo del PC.
         if (els.versioningToggle.checked && item.previous) {
           const versionRelative =
             BACKUP_ROOT +
@@ -868,7 +877,7 @@ async function backupAll() {
             "/" +
             item.path;
           versionTasks.push({
-            srcPath: item.fullPath,
+            srcPath: joinDestPath(state.destination.root, destRelative),
             destRoot: state.destination.root,
             relativeDest: versionRelative,
           });
@@ -876,19 +885,25 @@ async function backupAll() {
       }
 
       if (tasks.length) {
+        if (versionTasks.length) {
+          const versionResult = await window.kopiaAPI.backupCopyVersions(versionTasks);
+          if (versionResult.copied > 0) {
+            log(
+              comparison.sourceName + ": " + versionResult.copied +
+                " versión(es) anterior(es) guardada(s) comprimida(s)."
+            );
+          }
+          if (versionResult.errors.length) {
+            versionResult.errors.forEach((e) => log("Error al guardar versión: " + e.file + " — " + e.error));
+          }
+        }
+
         const result = await window.kopiaAPI.backupCopyFiles(tasks, { dedup, concurrency });
         totalCopied += result.copied;
         totalDeduped += result.deduped || 0;
 
         if (result.errors.length) {
           result.errors.forEach((e) => log("Error: " + e.file + " — " + e.error));
-        }
-
-        if (versionTasks.length) {
-          const versionResult = await window.kopiaAPI.backupCopyVersions(versionTasks);
-          if (versionResult.errors.length) {
-            versionResult.errors.forEach((e) => log("Error al guardar versión: " + e.file + " — " + e.error));
-          }
         }
       }
 
@@ -1054,6 +1069,12 @@ function renderMissingFilesCard(sourceName, localPath, missingFiles) {
 
   const fileList = document.createElement("div");
   fileList.className = "file-list";
+
+  // Selección por archivo sobre la lista COMPLETA de faltantes, no sólo los
+  // renderizados: los que exceden MAX_RENDERED_FILES no tienen fila propia,
+  // pero arrancan seleccionados y "Seleccionar todos" también los gobierna.
+  // Antes sólo se restauraban los primeros 50 y el resto se omitía en silencio.
+  const selection = new Map(missingFiles.map((file) => [file.path, true]));
   const checkboxes = [];
 
   missingFiles.slice(0, MAX_RENDERED_FILES).forEach((file) => {
@@ -1063,9 +1084,8 @@ function renderMissingFilesCard(sourceName, localPath, missingFiles) {
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = true;
-    cb.dataset.path = file.path;
-    cb.dataset.backupFullPath = file.backupFullPath;
     checkboxes.push(cb);
+    cb.addEventListener("change", () => selection.set(file.path, cb.checked));
 
     const nameEl = document.createElement("strong");
     nameEl.textContent = file.path;
@@ -1088,8 +1108,11 @@ function renderMissingFilesCard(sourceName, localPath, missingFiles) {
     const spacer = document.createElement("span");
     const more = document.createElement("strong");
     more.textContent = "+ " + (missingFiles.length - MAX_RENDERED_FILES) + " más";
+    const note = document.createElement("span");
+    note.textContent = "También se restaurarán aunque no se listen aquí.";
     row.appendChild(spacer);
     row.appendChild(more);
+    row.appendChild(note);
     fileList.appendChild(row);
   }
 
@@ -1098,15 +1121,11 @@ function renderMissingFilesCard(sourceName, localPath, missingFiles) {
 
   selectAllCb.addEventListener("change", () => {
     checkboxes.forEach((cb) => (cb.checked = selectAllCb.checked));
+    for (const key of selection.keys()) selection.set(key, selectAllCb.checked);
   });
 
   restoreSelectedBtn.addEventListener("click", async () => {
-    const toRestore = checkboxes
-      .filter((cb) => cb.checked)
-      .map((cb) => ({
-        path: cb.dataset.path,
-        backupFullPath: cb.dataset.backupFullPath,
-      }));
+    const toRestore = missingFiles.filter((file) => selection.get(file.path));
 
     if (!toRestore.length) {
       log("No hay archivos seleccionados para restaurar.");

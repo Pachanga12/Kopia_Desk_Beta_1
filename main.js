@@ -16,6 +16,10 @@ const {
   detectDriveType,
   pickConcurrency,
   hideFolder,
+  startJournal,
+  appendJournalDone,
+  finishJournal,
+  checkJournals,
 } = require("./lib/core.js");
 
 const BACKUP_ROOT = "KopiaDesk_Backup";
@@ -107,33 +111,6 @@ ipcMain.handle("fs:scan-directory", (event, dirPath, excludePatterns) => {
 ipcMain.handle("fs:hash-file", async (_event, filePath) => hashFileAsync(filePath));
 
 ipcMain.handle("fs:quick-hash", (_event, filePath, size) => quickHashFile(filePath, size));
-
-ipcMain.handle("fs:copy-file", async (_event, srcPath, destRoot, relativeDest) => {
-  const target = safePath(destRoot, relativeDest);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.copyFileSync(srcPath, target);
-  return { ok: true, path: target };
-});
-
-ipcMain.handle("fs:read-text", async (_event, filePath) => {
-  if (!fs.existsSync(filePath)) return null;
-  return fs.readFileSync(filePath, "utf-8");
-});
-
-ipcMain.handle("fs:write-text", async (_event, destRoot, relativePath, content) => {
-  const target = safePath(destRoot, relativePath);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, content, "utf-8");
-  return { ok: true, path: target };
-});
-
-ipcMain.handle("fs:file-exists", async (_event, filePath) => {
-  return fs.existsSync(filePath);
-});
-
-ipcMain.handle("fs:hide-folder", async (_event, folderPath) => {
-  return hideFolder(folderPath);
-});
 
 function manifestDir(destRoot) {
   return path.join(destRoot, BACKUP_ROOT, METADATA_DIR, "manifests");
@@ -283,65 +260,15 @@ async function copyOneTask(task, dedupIndex, pendingWrites) {
 }
 
 // --- Journal de operaciones (detecta/limpia backups interrumpidos) ---------
+// La lógica vive en lib/core.js (append-only, testeable); acá sólo se resuelve
+// la carpeta donde se guarda dentro del disco destino.
 
 function journalDir(destRoot) {
   return path.join(destRoot, BACKUP_ROOT, METADATA_DIR, "journal");
 }
 
-function startJournal(destRoot, tasks) {
-  if (!tasks.length) return null;
-  const dir = journalDir(destRoot);
-  fs.mkdirSync(dir, { recursive: true });
-  const fp = path.join(dir, "backup_" + new Date().toISOString().replace(/[:.]/g, "-") + ".json");
-  const entries = tasks.map((t) => ({ relativeDest: t.relativeDest, status: "pending" }));
-  fs.writeFileSync(fp, JSON.stringify({ startedAt: new Date().toISOString(), entries }, null, 2));
-  return fp;
-}
-
-function flushJournal(fp, entries, startedAt) {
-  try {
-    fs.writeFileSync(fp, JSON.stringify({ startedAt, entries }, null, 2));
-  } catch {
-    // no crítico
-  }
-}
-
 ipcMain.handle("journal:check", async (_event, destRoot) => {
-  const dir = journalDir(destRoot);
-  if (!fs.existsSync(dir)) return { found: 0, filesCleaned: 0, lastInterruptedAt: null };
-
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
-  let filesCleaned = 0;
-  let lastInterruptedAt = null;
-
-  for (const f of files) {
-    const fp = path.join(dir, f);
-    try {
-      const data = JSON.parse(fs.readFileSync(fp, "utf-8"));
-      lastInterruptedAt = data.startedAt;
-      for (const entry of data.entries) {
-        if (entry.status === "done") continue;
-        try {
-          const target = safePath(destRoot, entry.relativeDest);
-          if (fs.existsSync(target)) {
-            fs.unlinkSync(target);
-            filesCleaned++;
-          }
-        } catch {
-          // ruta inválida o ya no existe: se ignora
-        }
-      }
-    } catch {
-      // journal corrupto, se descarta igual
-    }
-    try {
-      fs.unlinkSync(fp);
-    } catch {
-      // ya no existe
-    }
-  }
-
-  return { found: files.length, filesCleaned, lastInterruptedAt };
+  return checkJournals(journalDir(destRoot), destRoot);
 });
 
 // --- Detección de tipo de disco (para concurrencia adaptativa) ------------
@@ -364,21 +291,14 @@ ipcMain.handle("backup:copy-files", async (event, tasks, options = {}) => {
   const pendingWrites = options.dedup ? new Map() : null;
   const concurrency = options.concurrency > 0 ? options.concurrency : BACKUP_CONCURRENCY;
 
-  const journalEntries = tasks.map((t) => ({ relativeDest: t.relativeDest, status: "pending" }));
-  const journalPath = destRoot ? startJournal(destRoot, tasks) : null;
-  const journalStartedAt = new Date().toISOString();
-  let lastFlush = Date.now();
+  const journalPath = destRoot ? startJournal(journalDir(destRoot), tasks) : null;
 
-  async function copyOne(task, index) {
+  async function copyOne(task) {
     try {
       const result = await copyOneTask({ ...task, dedup: options.dedup }, dedupIndex, pendingWrites);
       if (result.dedup) deduped++;
       copied++;
-      journalEntries[index].status = "done";
-      if (journalPath && (copied % 25 === 0 || Date.now() - lastFlush > 1500)) {
-        flushJournal(journalPath, journalEntries, journalStartedAt);
-        lastFlush = Date.now();
-      }
+      if (journalPath) appendJournalDone(journalPath, task.relativeDest);
       event.sender.send("progress", {
         phase: "backup",
         current: copied,
@@ -395,8 +315,8 @@ ipcMain.handle("backup:copy-files", async (event, tasks, options = {}) => {
   }
 
   const inFlight = new Set();
-  for (let i = 0; i < tasks.length; i++) {
-    const p = copyOne(tasks[i], i);
+  for (const task of tasks) {
+    const p = copyOne(task);
     inFlight.add(p);
     p.finally(() => inFlight.delete(p));
     if (inFlight.size >= concurrency) await Promise.race(inFlight);
@@ -405,17 +325,9 @@ ipcMain.handle("backup:copy-files", async (event, tasks, options = {}) => {
 
   if (dedupIndex) saveContentIndex(destRoot, dedupIndex);
 
-  if (journalPath) {
-    if (errors.length === 0) {
-      try {
-        fs.unlinkSync(journalPath);
-      } catch {
-        // no crítico
-      }
-    } else {
-      flushJournal(journalPath, journalEntries, journalStartedAt);
-    }
-  }
+  // Sin errores, el journal ya cumplió; con errores se conserva para que el
+  // próximo journal:check limpie los archivos que quedaron a medias.
+  if (journalPath && errors.length === 0) finishJournal(journalPath);
 
   return { copied, errors, deduped };
 });
@@ -451,12 +363,21 @@ function writeVersionStream(srcPath, destPath) {
   });
 }
 
+// Guarda la versión ANTERIOR de cada archivo cambiado: se llama antes de
+// sobrescribir el backup, comprimiendo el archivo que está por reemplazarse.
 ipcMain.handle("backup:copy-versions", async (_event, tasks) => {
   let copied = 0;
+  let skipped = 0;
   const errors = [];
 
   for (const task of tasks) {
     try {
+      if (!fs.existsSync(task.srcPath)) {
+        // El manifiesto lo conocía pero el backup no lo tiene (p. ej. backup
+        // viejo movido a mano): no hay versión previa que preservar.
+        skipped++;
+        continue;
+      }
       const target = safePath(task.destRoot, task.relativeDest + ".gz");
       await writeVersionStream(task.srcPath, target);
       copied++;
@@ -464,7 +385,7 @@ ipcMain.handle("backup:copy-versions", async (_event, tasks) => {
       errors.push({ file: task.relativeDest, error: err.message });
     }
   }
-  return { copied, errors };
+  return { copied, skipped, errors };
 });
 
 ipcMain.handle("log:save", async (_event, destRoot, sourceName, report) => {
