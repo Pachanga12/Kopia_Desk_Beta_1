@@ -39,7 +39,8 @@ npm test
   concurrencia adaptada automáticamente al tipo de disco (SSD/HDD/USB).
 - Deduplicación por contenido: si un archivo ya existe en el backup (aunque esté
   en otra carpeta o con otro nombre), se enlaza en vez de copiarse de nuevo.
-- Guarda versiones de archivos cambiados, comprimidas con gzip (opcional).
+- Versionado opcional: antes de sobrescribir un archivo cambiado en el backup,
+  guarda su versión anterior comprimida con gzip en `.kopia-data\versions\<fecha>\`.
 - Verificación profunda opcional con hash SHA-256 completo.
 - Metadata interno oculto en `.kopia-data` (invisible al usuario).
 - Journal de operaciones: detecta y limpia restos de un backup interrumpido
