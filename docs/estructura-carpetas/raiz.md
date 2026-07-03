@@ -62,9 +62,11 @@ la vez — el segundo espera al primero y se enlaza a él.
 Antes de empezar a copiar un lote de archivos, se escribe un registro en
 `.kopia-data/journal/` con el estado de cada archivo (pendiente/hecho). Si la
 app se cierra de golpe (corte de luz, disco desconectado) a mitad de una copia
-grande, la próxima vez que se elija ese mismo disco destino (`journal:check`) se
-detectan los archivos que quedaron a medio escribir y se borran automáticamente,
-para que no queden restos corruptos confundidos con un backup válido.
+grande, la próxima vez que se elija ese mismo disco destino se detecta
+(`journal:peek`, que sólo mira sin borrar) y la interfaz pregunta al usuario
+antes de limpiar; al confirmar, `journal:check` borra los archivos que
+quedaron a medio escribir, para que no queden restos corruptos confundidos
+con un backup válido.
 
 ### 8. Concurrencia adaptativa
 `detectDriveType()` le pregunta a PowerShell si el disco destino es SSD, HDD o
@@ -78,7 +80,10 @@ mecánicos (para no forzar al cabezal a saltar de un lado a otro).
 - `backup:copy-versions` guarda una copia del archivo **anterior** (antes de
   sobrescribirlo) comprimida con gzip, para poder recuperar una versión vieja.
 - `restore:scan` compara lo que hay en el backup contra lo que hay en el PC y
-  lista lo que falta; `restore:copy-files` trae esos archivos de vuelta.
+  lista lo que falta; también reporta (`lostFromBackup`) los archivos que
+  figuran en el manifiesto pero ya no existen en el disco de backup, para que
+  la interfaz ofrezca recopiarlos. `restore:copy-files` trae los archivos
+  faltantes de vuelta al PC.
 
 > **Nota**: se implementó y luego se quitó un cifrado AES-256-GCM por archivo —
 > no aportaba suficiente frente a cifrar el disco USB completo con una

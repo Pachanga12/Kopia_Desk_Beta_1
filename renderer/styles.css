@@ -13,7 +13,7 @@
   --green-deep: #166b46;
   --amber: #b7791f;
   --red: #b4232b;
-  --shadow: 0 20px 50px rgba(22, 33, 44, 0.1);
+  --shadow: 0 1px 3px rgba(22, 33, 44, 0.07);
   --track: #e2e8f0;
   --divider: #edf0f4;
   --empty-bg: rgba(255, 255, 255, 0.64);
@@ -42,7 +42,7 @@
   --green-deep: #55d19d;
   --amber: #d69a3a;
   --red: #e2626c;
-  --shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   --track: #232c37;
   --divider: #242e39;
   --empty-bg: rgba(255, 255, 255, 0.03);
@@ -64,9 +64,7 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--ink);
-  background:
-    linear-gradient(135deg, var(--tint-1), var(--tint-2)),
-    var(--paper);
+  background: var(--paper);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   transition: background 160ms ease, color 160ms ease;
@@ -148,8 +146,8 @@ button:disabled {
 .workspace,
 .log-panel {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--overlay);
+  border-radius: 10px;
+  background: var(--panel);
   box-shadow: var(--shadow);
 }
 
@@ -184,8 +182,9 @@ p {
 
 h1 {
   margin-bottom: 0;
-  font-size: clamp(1.8rem, 3vw, 3rem);
-  line-height: 0.95;
+  font-size: clamp(1.6rem, 2.4vw, 2.2rem);
+  line-height: 1;
+  letter-spacing: -0.01em;
 }
 
 h2 {
@@ -212,16 +211,13 @@ p {
 .status-grid div {
   display: grid;
   align-content: center;
-  min-height: 82px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
+  padding: 8px 12px;
+  border-left: 1px solid var(--divider);
 }
 
 .status-grid span {
-  font-size: 1.9rem;
-  font-weight: 800;
+  font-size: 1.6rem;
+  font-weight: 700;
 }
 
 .status-grid small {
@@ -306,14 +302,21 @@ p {
   padding: 0 20px;
 }
 
-.source-pill.selectable {
-  flex-wrap: wrap;
-}
-
 .source-pill .pill-check {
   display: flex;
   gap: 8px;
   align-items: center;
+  min-width: 0;
+}
+
+/* Ruta/nota del medio: se recorta con "…" para que el botón nunca se salga */
+.pill-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .quick-folders {
@@ -338,9 +341,11 @@ p {
   border-color: var(--blue);
 }
 
+/* Grid de 3 columnas (nombre | ruta | botón): la ruta larga se recorta en vez
+   de empujar el botón fuera del cuadro o superponerse con el texto. */
 .source-pill {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   min-height: 40px;
@@ -361,10 +366,15 @@ p {
 }
 
 .source-pill button {
-  width: 34px;
   min-height: 32px;
-  font-size: 1rem;
   line-height: 1;
+  white-space: nowrap;
+}
+
+/* Botón "×" de quitar carpeta en la barra lateral */
+#sourcesList .source-pill button {
+  width: 34px;
+  font-size: 1rem;
 }
 
 .toggle {
@@ -373,6 +383,26 @@ p {
   align-items: center;
   min-height: 36px;
   color: var(--muted);
+  cursor: help;
+}
+
+.info-dot {
+  flex: none;
+  display: grid;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.toggle:hover .info-dot {
+  color: var(--blue);
+  border-color: var(--blue);
 }
 
 .actions {
@@ -434,14 +464,15 @@ p {
 
 .tab-bar {
   display: flex;
-  gap: 4px;
+  gap: 20px;
 }
 
 .tab {
   min-height: 36px;
-  padding: 6px 18px;
-  border: 1px solid var(--line);
-  border-radius: 8px 8px 0 0;
+  padding: 6px 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   color: var(--muted);
   background: transparent;
   font-weight: 600;
@@ -451,12 +482,12 @@ p {
 
 .tab.active {
   color: var(--blue);
-  background: var(--panel);
-  border-bottom-color: var(--panel);
+  border-bottom-color: var(--blue);
 }
 
 .tab:hover:not(.active) {
-  background: var(--tab-hover);
+  color: var(--ink);
+  background: transparent;
   transform: none;
 }
 
@@ -496,14 +527,30 @@ p {
   background: var(--warning-bg);
 }
 
+.warning p {
+  margin: 0;
+  color: inherit;
+}
+
+.notice-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.notice-actions button {
+  min-height: 36px;
+  padding: 0 16px;
+}
+
 .empty-state {
   display: grid;
   place-content: center;
   min-height: 430px;
   border: 1px dashed var(--dashed);
-  border-radius: 8px;
+  border-radius: 10px;
   text-align: center;
-  background: var(--empty-bg);
+  background: transparent;
 }
 
 .changes-view {
@@ -521,7 +568,7 @@ p {
 
 .folder-card:hover {
   border-color: var(--hover-border);
-  box-shadow: 0 4px 16px rgba(22, 33, 44, 0.09);
+  box-shadow: 0 2px 8px rgba(22, 33, 44, 0.06);
 }
 
 .folder-card > header {
@@ -546,24 +593,26 @@ p {
 
 .badge {
   min-width: 74px;
-  padding: 6px 9px;
-  border-radius: 8px;
-  color: #fff;
+  padding: 5px 10px;
+  border-radius: 999px;
   text-align: center;
-  font-size: 0.82rem;
-  font-weight: 800;
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 
 .badge.new {
-  background: var(--green);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 14%, transparent);
 }
 
 .badge.changed {
-  background: var(--amber);
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
 }
 
 .badge.missing {
-  background: var(--red);
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
 }
 
 .decision-row {
@@ -600,7 +649,7 @@ p {
   gap: 12px;
   padding: 12px 16px;
   cursor: pointer;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .file-list {

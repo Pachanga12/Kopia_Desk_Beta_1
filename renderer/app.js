@@ -14,6 +14,7 @@ const state = {
   excludePatterns: [],
   compareSources: [],
   compareSelection: {},
+  journalPending: false,
 };
 
 const els = {
@@ -38,6 +39,11 @@ const els = {
   versioningToggle: document.querySelector("#versioningToggle"),
   hashToggle: document.querySelector("#hashToggle"),
   dedupToggle: document.querySelector("#dedupToggle"),
+  advancedToggle: document.querySelector("#advancedToggle"),
+  journalNotice: document.querySelector("#journalNotice"),
+  journalNoticeText: document.querySelector("#journalNoticeText"),
+  journalCleanBtn: document.querySelector("#journalCleanBtn"),
+  journalSkipBtn: document.querySelector("#journalSkipBtn"),
   themeToggle: document.querySelector("#themeToggle"),
   progressContainer: document.querySelector("#progressContainer"),
   progressPhase: document.querySelector("#progressPhase"),
@@ -93,8 +99,8 @@ window.kopiaAPI.onProgress((data) => {
 function setBusy(busy) {
   state.busy = busy;
   els.scanBtn.disabled = busy;
-  els.backupBtn.disabled = busy || !state.destination || totalChanges() === 0;
   els.addSourceBtn.disabled = busy;
+  updateCounts();
   updateCompareBtn();
 }
 
@@ -105,11 +111,34 @@ function totalChanges() {
   );
 }
 
+// Aviso de espacio en vivo: se recalcula al escanear, cambiar decisiones,
+// versionado o destino. Si no alcanza, se explica el porqué y se deshabilita
+// "Copiar aceptados" en vez de fallar recién al apretar el botón.
+function updateSpaceStatus() {
+  if (!state.destination) {
+    els.spaceWarning.hidden = true;
+    return true;
+  }
+  const planned = computePlannedBytes();
+  const enough = planned === 0 || planned * SPACE_SAFETY_MARGIN <= state.destination.free;
+  if (enough) {
+    els.spaceWarning.hidden = true;
+  } else {
+    els.spaceWarning.hidden = false;
+    els.spaceWarning.textContent =
+      "No hay espacio suficiente en el disco destino: se necesitan aprox. " +
+      formatBytes(planned) + " y hay " + formatBytes(state.destination.free) +
+      " libres. Libera espacio, elige otro disco o desmarca archivos. El botón \"Copiar aceptados\" se habilitará cuando alcance.";
+  }
+  return enough;
+}
+
 function updateCounts() {
   els.sourceCount.textContent = state.sources.length;
   els.changeCount.textContent = totalChanges();
   els.copiedCount.textContent = state.copied;
-  els.backupBtn.disabled = state.busy || !state.destination || totalChanges() === 0;
+  const spaceOk = updateSpaceStatus();
+  els.backupBtn.disabled = state.busy || !state.destination || totalChanges() === 0 || !spaceOk;
 }
 
 function formatBytes(bytes) {
@@ -231,11 +260,9 @@ function renderCompareSelectionList() {
     row.appendChild(checkLabel);
 
     const pathSpan = document.createElement("span");
-    pathSpan.style.fontSize = "0.78rem";
-    pathSpan.style.color = "var(--muted)";
-    pathSpan.style.overflow = "hidden";
-    pathSpan.style.textOverflow = "ellipsis";
+    pathSpan.className = "pill-path";
     pathSpan.textContent = sel.localPath || "Sin carpeta local elegida";
+    pathSpan.title = sel.localPath || "";
     row.appendChild(pathSpan);
 
     const pickBtn = document.createElement("button");
@@ -288,11 +315,9 @@ function renderSources() {
     row.appendChild(label);
 
     const pathSpan = document.createElement("span");
-    pathSpan.style.fontSize = "0.78rem";
-    pathSpan.style.color = "var(--muted)";
-    pathSpan.style.overflow = "hidden";
-    pathSpan.style.textOverflow = "ellipsis";
+    pathSpan.className = "pill-path";
     pathSpan.textContent = source.path;
+    pathSpan.title = source.path;
     row.appendChild(pathSpan);
 
     const remove = document.createElement("button");
@@ -461,6 +486,8 @@ async function selectDestination() {
     els.destinationLabel.textContent = "Selecciona donde guardar";
     els.spaceInfo.textContent = "";
     els.driveInfo.textContent = "";
+    els.journalNotice.hidden = true;
+    state.journalPending = false;
     updateCounts();
     refreshActiveExtraTab();
     return;
@@ -504,16 +531,20 @@ async function selectDestination() {
       els.driveInfo.textContent = "";
     });
 
-  // Journal: detecta y limpia restos de un backup interrumpido anteriormente
+  // Journal: si quedó un backup interrumpido se avisa qué pasó y se pide
+  // confirmación antes de borrar los archivos parciales (antes se limpiaba
+  // en silencio y el usuario no sabía por qué la app "limpiaba" algo).
+  els.journalNotice.hidden = true;
+  state.journalPending = false;
   window.kopiaAPI
-    .journalCheck(state.destination.root)
-    .then((result) => {
-      if (result.found > 0) {
-        log(
-          "Se detectó un backup interrumpido (" +
-            (result.lastInterruptedAt ? new Date(result.lastInterruptedAt).toLocaleString() : "fecha desconocida") +
-            "). Se limpiaron " + result.filesCleaned + " archivo(s) parcial(es)."
-        );
+    .journalPeek(state.destination.root)
+    .then((info) => {
+      if (info.found > 0 && info.pendingFiles > 0) {
+        showJournalNotice(info);
+      } else if (info.found > 0) {
+        // Sólo quedaron metadatos de journal (sin archivos parciales): se
+        // limpian en silencio, no hay nada del usuario que borrar ni confirmar.
+        return window.kopiaAPI.journalCheck(state.destination.root).catch(() => {});
       }
     })
     .catch(() => {});
@@ -523,6 +554,49 @@ async function selectDestination() {
   updateCounts();
   saveState();
 }
+
+// --- Aviso de backup interrumpido (journal) ---------------------------------
+
+function showJournalNotice(info) {
+  const when = info.lastInterruptedAt
+    ? new Date(info.lastInterruptedAt).toLocaleString()
+    : "fecha desconocida";
+  state.journalPending = true;
+  els.journalNoticeText.textContent =
+    "Se detectó un backup anterior interrumpido (" + when + "). Quedaron " +
+    info.pendingFiles + " archivo(s) a medio copiar. Se recomienda eliminarlos " +
+    "para evitar copias corruptas — tus backups completos no se tocan.";
+  els.journalNotice.hidden = false;
+}
+
+async function cleanInterruptedJournal() {
+  const result = await window.kopiaAPI.journalCheck(state.destination.root);
+  state.journalPending = false;
+  els.journalNotice.hidden = true;
+  return result;
+}
+
+els.journalCleanBtn.addEventListener("click", async () => {
+  if (!state.destination) return;
+  if (state.busy) {
+    log("Espera a que termine la operación en curso antes de limpiar.");
+    return;
+  }
+  try {
+    const result = await cleanInterruptedJournal();
+    log(
+      "Limpieza del backup interrumpido completada: se eliminaron " +
+        result.filesCleaned + " archivo(s) parcial(es)."
+    );
+  } catch (error) {
+    log("No se pudo limpiar el backup interrumpido: " + error.message);
+  }
+});
+
+els.journalSkipBtn.addEventListener("click", () => {
+  els.journalNotice.hidden = true;
+  log("Limpieza pospuesta. Se volverá a avisar la próxima vez que elijas este disco.");
+});
 
 function compareManifests(current, previous) {
   return (async () => {
@@ -680,14 +754,27 @@ function renderComparisons() {
     const stats = node.querySelector(".folder-stats");
     stats.textContent = "";
     const badges = [
-      { cls: "new", text: comparison.newFiles.length + " nuevos" },
-      { cls: "changed", text: comparison.changedFiles.length + " cambiados" },
-      { cls: "missing", text: comparison.missingFiles.length + " faltantes" },
+      {
+        cls: "new",
+        text: comparison.newFiles.length + " nuevos",
+        tip: "Archivos que no estaban en el último backup",
+      },
+      {
+        cls: "changed",
+        text: comparison.changedFiles.length + " cambiados",
+        tip: "Archivos modificados desde el último backup",
+      },
+      {
+        cls: "missing",
+        text: comparison.missingFiles.length + " faltantes",
+        tip: "Archivos que ya no están en tu PC (siguen guardados en el backup)",
+      },
     ];
     badges.forEach((b) => {
       const span = document.createElement("span");
       span.className = "badge " + b.cls;
       span.textContent = b.text;
+      span.title = b.tip;
       stats.appendChild(span);
     });
 
@@ -701,16 +788,16 @@ function renderComparisons() {
 
     const groups = node.querySelector(".file-groups");
     groups.appendChild(
-      fileGroup("Nuevos", comparison.newFiles, "Aparecen en el origen y no estaban en el historial.")
+      fileGroup("Nuevos", comparison.newFiles, "Archivos que no estaban en el último backup.")
     );
     groups.appendChild(
-      fileGroup("Cambiados", comparison.changedFiles, "Mismo nombre, distinto tamaño, fecha o hash.")
+      fileGroup("Cambiados", comparison.changedFiles, "Archivos modificados desde el último backup.")
     );
     groups.appendChild(
       fileGroup(
         "Eliminados del origen",
         comparison.missingFiles,
-        "Se registran, pero no se borran del backup."
+        "Ya no están en tu PC, pero siguen guardados en el backup: no se borra nada."
       )
     );
     els.changesView.appendChild(node);
@@ -723,6 +810,7 @@ function fileGroup(title, files, hint) {
   details.open = files.length > 0 && files.length <= 8;
 
   const summary = document.createElement("summary");
+  summary.title = hint;
   const titleSpan = document.createElement("span");
   titleSpan.textContent = title;
   const countSpan = document.createElement("span");
@@ -802,18 +890,34 @@ async function backupAll() {
     return;
   }
 
-  const plannedBytes = computePlannedBytes();
-  els.spaceWarning.hidden = true;
-  if (plannedBytes > 0 && plannedBytes * SPACE_SAFETY_MARGIN > state.destination.free) {
-    els.spaceWarning.hidden = false;
-    els.spaceWarning.textContent =
-      "Espacio insuficiente: se necesitan aprox. " + formatBytes(plannedBytes) +
-      " y el disco tiene " + formatBytes(state.destination.free) + " libres. Libera espacio o reduce lo seleccionado.";
+  // Doble chequeo: el botón ya se deshabilita en vivo cuando no hay espacio
+  // (updateSpaceStatus), pero se vuelve a validar por si el disco se llenó
+  // entre el escaneo y el clic.
+  if (!updateSpaceStatus()) {
     log("Backup cancelado: espacio insuficiente en el destino.");
+    updateCounts();
     return;
   }
 
   setBusy(true);
+
+  // Si quedó un backup interrumpido sin limpiar (el usuario eligió "Ahora no"),
+  // se limpia antes de copiar: si no, el journal viejo apuntaría a archivos que
+  // esta corrida va a dejar completos y una limpieza posterior los borraría.
+  if (state.journalPending) {
+    try {
+      const cleaned = await cleanInterruptedJournal();
+      if (cleaned.filesCleaned > 0) {
+        log(
+          "Antes de copiar se eliminaron " + cleaned.filesCleaned +
+            " archivo(s) parcial(es) del backup interrumpido."
+        );
+      }
+    } catch (error) {
+      log("No se pudo limpiar el backup interrumpido: " + error.message);
+    }
+  }
+
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   let totalCopied = 0;
   let totalDeduped = 0;
@@ -987,8 +1091,20 @@ async function compareSelected() {
       const result = await window.kopiaAPI.restoreScan(state.destination.root, sourceName, sel.localPath);
       await window.kopiaAPI.rememberSourcePath(state.destination.root, sourceName, sel.localPath).catch(() => {});
 
+      // Archivos que figuran como respaldados pero ya no están en el disco de
+      // backup (p. ej. borrados a mano de la copia). Se avisa y se ofrece
+      // quitarlos del registro para que el próximo backup los vuelva a copiar.
+      const lost = result.lostFromBackup || [];
+      if (lost.length) {
+        log(
+          sourceName + ": atención, " + lost.length +
+            " archivo(s) ya no están en el disco de backup aunque figuran como respaldados."
+        );
+        renderLostFilesCard(sourceName, lost);
+      }
+
       if (!result.missing.length) {
-        log(sourceName + ": todos los archivos están presentes en el PC.");
+        if (!lost.length) log(sourceName + ": todos los archivos están presentes en el PC.");
         const card = document.createElement("div");
         card.className = "restore-card";
         const header = document.createElement("header");
@@ -1025,7 +1141,100 @@ async function compareSelected() {
   }
 }
 
+// Tarjeta para archivos que el registro da por respaldados pero ya no existen
+// en el disco de backup. No se pueden restaurar desde aquí; la reparación es
+// quitarlos del registro para que el próximo backup los detecte como nuevos.
+function renderLostFilesCard(sourceName, lostFiles) {
+  // Se fija el disco al momento de crear la tarjeta: si el usuario cambia el
+  // destino después de comparar, el botón no debe escribir en el disco nuevo.
+  const destRoot = state.destination.root;
+  const card = document.createElement("div");
+  card.className = "restore-card";
+
+  const header = document.createElement("header");
+  const info = document.createElement("div");
+  const h3 = document.createElement("h3");
+  h3.textContent = sourceName;
+  const p = document.createElement("p");
+  p.textContent =
+    lostFiles.length +
+    " archivo(s) figuran como respaldados pero ya no están en el disco de backup " +
+    "(¿se borraron de la copia?). Los que sigan en tu carpeta original se pueden recopiar.";
+  info.appendChild(h3);
+  info.appendChild(p);
+  const badge = document.createElement("span");
+  badge.className = "badge changed";
+  badge.textContent = lostFiles.length + " faltan en backup";
+  badge.title = "Archivos que ya no están en el disco de backup aunque el registro dice que se copiaron";
+  header.appendChild(info);
+  header.appendChild(badge);
+  card.appendChild(header);
+
+  const actions = document.createElement("div");
+  actions.className = "restore-actions";
+  const repairBtn = document.createElement("button");
+  repairBtn.className = "primary";
+  repairBtn.textContent = "Recopiar en el próximo backup";
+  repairBtn.title =
+    "Los quita del registro para que el próximo escaneo de Backup los detecte como nuevos y los vuelva a copiar";
+  repairBtn.style.width = "auto";
+  repairBtn.style.padding = "0 20px";
+  actions.appendChild(repairBtn);
+  card.appendChild(actions);
+
+  const fileList = document.createElement("div");
+  fileList.className = "file-list";
+  lostFiles.slice(0, MAX_RENDERED_FILES).forEach((file) => {
+    const row = document.createElement("div");
+    row.className = "file-row";
+    const nameEl = document.createElement("strong");
+    nameEl.textContent = file.path;
+    nameEl.title = file.path;
+    const sizeEl = document.createElement("span");
+    sizeEl.textContent = formatBytes(file.size);
+    const dateEl = document.createElement("span");
+    dateEl.textContent = file.lastModified ? new Date(file.lastModified).toLocaleString() : "";
+    row.appendChild(nameEl);
+    row.appendChild(sizeEl);
+    row.appendChild(dateEl);
+    fileList.appendChild(row);
+  });
+  if (lostFiles.length > MAX_RENDERED_FILES) {
+    const row = document.createElement("div");
+    row.className = "file-row";
+    const more = document.createElement("strong");
+    more.textContent = "+ " + (lostFiles.length - MAX_RENDERED_FILES) + " más";
+    row.appendChild(more);
+    row.appendChild(document.createElement("span"));
+    row.appendChild(document.createElement("span"));
+    fileList.appendChild(row);
+  }
+  card.appendChild(fileList);
+  els.compareResults.appendChild(card);
+
+  repairBtn.addEventListener("click", async () => {
+    if (state.busy) return;
+    setBusy(true);
+    try {
+      const manifest = await window.kopiaAPI.loadManifest(destRoot, sourceName);
+      lostFiles.forEach((file) => delete manifest[file.path]);
+      await window.kopiaAPI.saveManifest(destRoot, sourceName, manifest);
+      repairBtn.disabled = true;
+      repairBtn.textContent = "Listos para recopiar";
+      log(
+        sourceName + ": " + lostFiles.length +
+          " archivo(s) quitados del registro. Ve a la pestaña Backup, escanea y copia para recopiarlos."
+      );
+    } catch (error) {
+      log("No se pudo actualizar el registro: " + error.message);
+    } finally {
+      setBusy(false);
+    }
+  });
+}
+
 function renderMissingFilesCard(sourceName, localPath, missingFiles) {
+  const destRoot = state.destination.root;
   const card = document.createElement("div");
   card.className = "restore-card";
 
@@ -1140,7 +1349,7 @@ function renderMissingFilesCard(sourceName, localPath, missingFiles) {
       const avgSize = toRestore.reduce((t, f) => t + (f.size || 0), 0) / toRestore.length;
       let concurrency = 3;
       try {
-        const plan = await window.kopiaAPI.planConcurrency(state.destination.root, avgSize);
+        const plan = await window.kopiaAPI.planConcurrency(destRoot, avgSize);
         concurrency = plan.concurrency;
       } catch {
         // se usa el valor por defecto
@@ -1198,8 +1407,7 @@ function renderFullRestoreRow(sourceName) {
   row.appendChild(label);
 
   const hintSpan = document.createElement("span");
-  hintSpan.style.fontSize = "0.78rem";
-  hintSpan.style.color = "var(--muted)";
+  hintSpan.className = "pill-path";
   hintSpan.textContent = "Restaura todo el contenido a la carpeta que elijas";
   row.appendChild(hintSpan);
 
@@ -1259,6 +1467,7 @@ async function saveState() {
       versioning: els.versioningToggle.checked,
       hash: els.hashToggle.checked,
       dedup: els.dedupToggle.checked,
+      advanced: els.advancedToggle.checked,
     });
   } catch {
     // non-critical
@@ -1290,6 +1499,10 @@ async function loadState() {
     }
     if (typeof settings.dedup === "boolean") {
       els.dedupToggle.checked = settings.dedup;
+    }
+    if (typeof settings.advanced === "boolean") {
+      els.advancedToggle.checked = settings.advanced;
+      els.driveInfo.hidden = !settings.advanced;
     }
 
     // Restore destination after drives load
@@ -1333,9 +1546,17 @@ els.scanBtn.addEventListener("click", () => scanAll().catch((e) => log(e.message
 els.backupBtn.addEventListener("click", () => backupAll().catch((e) => log(e.message)));
 els.clearHistoryBtn.addEventListener("click", clearHistory);
 els.compareBtn.addEventListener("click", () => compareSelected().catch((e) => log(e.message)));
-els.versioningToggle.addEventListener("change", saveState);
+els.versioningToggle.addEventListener("change", () => {
+  // El versionado duplica el espacio estimado de los cambiados: recalcular aviso
+  updateCounts();
+  saveState();
+});
 els.hashToggle.addEventListener("change", saveState);
 els.dedupToggle.addEventListener("change", saveState);
+els.advancedToggle.addEventListener("change", () => {
+  els.driveInfo.hidden = !els.advancedToggle.checked;
+  saveState();
+});
 
 initTheme();
 renderSources();

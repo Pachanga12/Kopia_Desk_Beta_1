@@ -11,11 +11,15 @@ Tres zonas principales:
   botón de tema claro/oscuro (`#themeToggle`).
 - **Barra lateral** (`sidebar`): añadir carpetas de origen (por diálogo o con
   los accesos rápidos de `#quickFolders`), elegir disco destino, y el bloque de
-  **Opciones** (versionado, verificación profunda, deduplicación).
+  **Opciones** (versionado, verificación profunda, deduplicación y "Mostrar
+  detalles técnicos"). Cada opción, pestaña y categoría de archivos tiene un
+  tooltip (`title`) que explica en lenguaje simple qué hace al pasar el mouse.
 - **Panel principal**: tres pestañas — **Backup**, **Comparar** y
   **Restaurar** — barra de progreso, el aviso de espacio insuficiente
-  (`#spaceWarning`, oculto hasta que hace falta), y la lista de carpetas
-  escaneadas con sus archivos nuevos/cambiados/eliminados.
+  (`#spaceWarning`, oculto hasta que hace falta), el aviso de backup
+  interrumpido (`#journalNotice`, con botones "Continuar y limpiar" / "Ahora
+  no"), y la lista de carpetas escaneadas con sus archivos
+  nuevos/cambiados/eliminados.
 
 Hay un `<template>` (`folderTemplate`) que `app.js` clona por cada carpeta
 escaneada, para no repetir HTML a mano.
@@ -45,14 +49,21 @@ eliminado. Esta función es la que decide, usando el hash rápido, si un archivo
 con fecha distinta pero mismo tamaño realmente cambió de contenido.
 
 ### Elegir destino (`selectDestination`)
-Al elegir un disco: se calcula el espacio libre, se le pregunta a `main.js` qué
-tipo de disco es para sugerir la concurrencia de copia (`driveInfo`), y se
-ejecuta `journalCheck()` para avisar y limpiar si el backup anterior quedó
-interrumpido.
+Al elegir un disco: se calcula el espacio libre y se le pregunta a `main.js`
+qué tipo de disco es para sugerir la concurrencia de copia (`driveInfo`, sólo
+visible con "Mostrar detalles técnicos" activado). Después se ejecuta
+`journalPeek()`: si el backup anterior quedó interrumpido, se muestra
+`#journalNotice` explicando qué pasó y cuántos archivos parciales quedaron, y
+sólo si el usuario confirma se llama a `journalCheck()` para limpiarlos. Si
+elige "Ahora no", la limpieza queda pendiente (`state.journalPending`) y se
+hace automáticamente antes del próximo backup a ese disco.
 
 ### Copiar (`backupAll`)
-1. Calcula cuántos bytes se van a copiar (`computePlannedBytes`) y **cancela**
-   si el disco no tiene espacio suficiente, mostrando el aviso amarillo.
+1. El espacio se controla **en vivo** (`updateSpaceStatus`, llamado desde
+   `updateCounts`): si lo seleccionado no entra en el destino, el aviso
+   amarillo explica cuánto falta y el botón "Copiar aceptados" queda
+   deshabilitado. `backupAll` lo vuelve a validar al arrancar por si el disco
+   se llenó entre el escaneo y el clic.
 2. Calcula la concurrencia recomendada **una sola vez para toda la corrida**
    (según el disco destino y el tamaño promedio de todos los archivos
    seleccionados) — evita lanzar PowerShell de más por cada carpeta cuando
@@ -72,7 +83,10 @@ confirmar su ubicación local y apretar "Comparar seleccionados". Por cada una
 se llama a `restoreScan`, se muestra una tarjeta con los archivos faltantes
 (`renderMissingFilesCard`) y se puede restaurar sólo esos, y se actualiza la
 ruta local recordada (`rememberSourcePath`) con la que se usó, por si había
-cambiado.
+cambiado. Si el escaneo detecta archivos que figuran como respaldados pero ya
+no están en el disco de backup (`lostFromBackup`), se muestra otra tarjeta
+(`renderLostFilesCard`) con un botón que los quita del manifiesto para que el
+próximo backup los detecte como nuevos y los recopie.
 
 ### Restaurar (`loadFullRestoreList` / `renderFullRestoreRow`)
 Lista las carpetas del backup sin compararlas contra nada: cada fila tiene un

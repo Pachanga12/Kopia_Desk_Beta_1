@@ -68,19 +68,39 @@
 
           <div class="control-block">
             <h3>Opciones</h3>
-            <label class="toggle">
+            <label
+              class="toggle"
+              title="Antes de sobrescribir un archivo cambiado, guarda una copia comprimida de la versión anterior. Así puedes recuperar cómo era antes."
+            >
               <input id="versioningToggle" type="checkbox" checked />
               <span>Guardar versiones de cambiados (comprimidas)</span>
+              <span class="info-dot" aria-hidden="true">?</span>
             </label>
-            <label class="toggle">
+            <label
+              class="toggle"
+              title="Compara el contenido completo de cada archivo (SHA-256). Es más lento, pero asegura que el contenido realmente cambió."
+            >
               <input id="hashToggle" type="checkbox" />
               <span>Verificación profunda (hash SHA-256 completo)</span>
+              <span class="info-dot" aria-hidden="true">?</span>
             </label>
-            <label class="toggle">
+            <label
+              class="toggle"
+              title="Si tienes archivos idénticos repetidos, se guarda el contenido una sola vez. Ahorra espacio en el disco de backup."
+            >
               <input id="dedupToggle" type="checkbox" />
               <span>Deduplicar contenido (ahorra espacio)</span>
+              <span class="info-dot" aria-hidden="true">?</span>
             </label>
-            <div id="driveInfo" class="hint"></div>
+            <label
+              class="toggle"
+              title="Muestra información técnica, como el tipo de disco detectado (SSD/HDD/USB) y cuántos archivos se copian en paralelo."
+            >
+              <input id="advancedToggle" type="checkbox" />
+              <span>Mostrar detalles técnicos</span>
+              <span class="info-dot" aria-hidden="true">?</span>
+            </label>
+            <div id="driveInfo" class="hint" hidden></div>
           </div>
 
           <div class="actions">
@@ -92,14 +112,44 @@
         <section class="main-panel" aria-label="Cambios detectados">
           <div class="panel-head">
             <div class="tab-bar">
-              <button id="tabBackup" class="tab active" data-tab="backup">Backup</button>
-              <button id="tabCompare" class="tab" data-tab="compare">Comparar</button>
-              <button id="tabRestoreFull" class="tab" data-tab="restore-full">Restaurar</button>
+              <button
+                id="tabBackup"
+                class="tab active"
+                data-tab="backup"
+                title="Guarda en el disco destino los archivos nuevos o cambiados de tus carpetas"
+              >
+                Backup
+              </button>
+              <button
+                id="tabCompare"
+                class="tab"
+                data-tab="compare"
+                title="Restaura solo los archivos que faltan en tu PC, comparando contra el backup"
+              >
+                Comparar
+              </button>
+              <button
+                id="tabRestoreFull"
+                class="tab"
+                data-tab="restore-full"
+                title="Copia todo el contenido de una carpeta del backup a cualquier ubicación, sin comparar"
+              >
+                Restaurar
+              </button>
             </div>
             <div id="spaceInfo" class="space-info"></div>
           </div>
 
           <div id="spaceWarning" class="warning" hidden></div>
+
+          <!-- Aviso de backup interrumpido: se pide confirmación antes de limpiar -->
+          <div id="journalNotice" class="warning" hidden>
+            <p id="journalNoticeText"></p>
+            <div class="notice-actions">
+              <button id="journalCleanBtn" class="primary" type="button">Continuar y limpiar</button>
+              <button id="journalSkipBtn" type="button">Ahora no</button>
+            </div>
+          </div>
 
           <!-- Barra de progreso -->
           <div id="progressContainer" class="progress-container" hidden>
@@ -125,6 +175,10 @@
           <div id="compareView" hidden>
             <div class="restore-preview-block">
               <h3>Elige qué comparar</h3>
+              <p class="hint">
+                Compara una carpeta del backup con una carpeta de tu PC y restaura
+                solo los archivos que falten — útil si borraste algo por accidente.
+              </p>
               <div id="comparePreview" class="list empty">Selecciona un disco con backup.</div>
               <button id="compareBtn" class="primary restore-compare-btn" type="button" disabled>
                 Comparar seleccionados
@@ -171,9 +225,17 @@
           <div class="folder-stats"></div>
         </header>
         <div class="decision-row">
-          <label><input type="checkbox" data-kind="new" checked /> Nuevos</label>
-          <label><input type="checkbox" data-kind="changed" checked /> Cambiados</label>
-          <label><input type="checkbox" data-kind="missing" /> Sólo registrar eliminados</label>
+          <label title="Copiar los archivos que no estaban en el último backup">
+            <input type="checkbox" data-kind="new" checked /> Nuevos
+          </label>
+          <label title="Copiar los archivos modificados desde el último backup">
+            <input type="checkbox" data-kind="changed" checked /> Cambiados
+          </label>
+          <label
+            title="Archivos que ya no están en tu PC (siguen guardados en el backup, no se borran). Al marcarlo, solo se actualiza el registro para que dejen de aparecer como faltantes."
+          >
+            <input type="checkbox" data-kind="missing" /> Sólo registrar eliminados
+          </label>
         </div>
         <div class="file-groups"></div>
       </article>

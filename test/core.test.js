@@ -19,6 +19,7 @@ const {
   startJournal,
   appendJournalDone,
   finishJournal,
+  peekJournals,
   checkJournals,
 } = require("../lib/core.js");
 
@@ -227,6 +228,37 @@ test("journal: limpia sólo los archivos que quedaron pendientes al interrumpirs
   assert.ok(fs.existsSync(path.join(destRoot, "sub", "b.txt")), "los archivos completos no deben borrarse");
   assert.ok(!fs.existsSync(path.join(destRoot, "c.txt")), "el archivo parcial debe limpiarse");
   assert.equal(fs.readdirSync(jDir).length, 0, "el journal procesado debe eliminarse");
+});
+
+test("journal: peekJournals informa lo pendiente sin borrar nada", (t) => {
+  const destRoot = makeTempDir();
+  t.after(() => fs.rmSync(destRoot, { recursive: true, force: true }));
+  const jDir = path.join(destRoot, "journal");
+
+  const journalPath = startJournal(jDir, [
+    { relativeDest: "a.txt" },
+    { relativeDest: "b.txt" },
+  ]);
+  fs.writeFileSync(path.join(destRoot, "b.txt"), "parcial");
+  appendJournalDone(journalPath, "a.txt");
+
+  const peek = peekJournals(jDir);
+  assert.equal(peek.found, 1);
+  assert.equal(peek.pendingFiles, 1);
+  assert.ok(peek.lastInterruptedAt);
+
+  assert.ok(fs.existsSync(path.join(destRoot, "b.txt")), "peek no debe borrar el archivo parcial");
+  assert.ok(fs.existsSync(journalPath), "peek no debe borrar el journal");
+
+  // La limpieza real sigue funcionando después del peek
+  const result = checkJournals(jDir, destRoot);
+  assert.equal(result.filesCleaned, 1);
+  assert.ok(!fs.existsSync(path.join(destRoot, "b.txt")));
+});
+
+test("journal: peekJournals sin carpeta de journal no encuentra nada", () => {
+  const peek = peekJournals(path.join(os.tmpdir(), "kopia-journal-inexistente"));
+  assert.deepEqual(peek, { found: 0, pendingFiles: 0, lastInterruptedAt: null });
 });
 
 test("journal: startJournal devuelve null si no hay tareas", () => {
