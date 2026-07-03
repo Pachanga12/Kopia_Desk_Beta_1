@@ -285,6 +285,11 @@ p {
   background: var(--panel);
 }
 
+.destination-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .list,
 .destination {
   margin-top: 10px;
@@ -485,7 +490,7 @@ p {
   border-bottom-color: var(--blue);
 }
 
-.tab:hover:not(.active) {
+.tab:hover:not(.active):not(:disabled) {
   color: var(--ink);
   background: transparent;
   transform: none;

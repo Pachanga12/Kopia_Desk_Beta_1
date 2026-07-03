@@ -62,6 +62,8 @@ const els = {
   restoreFullList: document.querySelector("#restoreFullList"),
 };
 
+const MAX_LOG_ENTRIES = 300;
+
 function log(message) {
   const item = document.createElement("li");
   const time = document.createElement("time");
@@ -69,6 +71,12 @@ function log(message) {
   item.appendChild(time);
   item.appendChild(document.createTextNode(" — " + message));
   els.logList.prepend(item);
+  // El registro se alimenta archivo por archivo en operaciones grandes; sin
+  // tope, el DOM acumula miles de <li> y la ventana se vuelve lenta. Se
+  // conservan las entradas más recientes (las más viejas están al final).
+  while (els.logList.childElementCount > MAX_LOG_ENTRIES) {
+    els.logList.lastElementChild.remove();
+  }
 }
 
 function showProgress(phase, current, total, file) {
@@ -100,6 +108,17 @@ function setBusy(busy) {
   state.busy = busy;
   els.scanBtn.disabled = busy;
   els.addSourceBtn.disabled = busy;
+  // Bloquear los controles que mutan el estado del que dependen las operaciones
+  // en curso: cambiar de disco o refrescar discos pone state.destination en null
+  // a mitad de una copia; borrar el historial vacía state.comparisons mientras
+  // backupAll() todavía itera sobre esa lista. Cambiar de pestaña resetea las
+  // listas de comparar/restaurar. Se rehabilitan al terminar.
+  els.refreshDrivesBtn.disabled = busy;
+  els.destinationSelect.disabled = busy;
+  els.clearHistoryBtn.disabled = busy;
+  els.tabBackup.disabled = busy;
+  els.tabCompare.disabled = busy;
+  els.tabRestoreFull.disabled = busy;
   updateCounts();
   updateCompareBtn();
 }
@@ -1215,17 +1234,19 @@ function renderLostFilesCard(sourceName, lostFiles) {
   repairBtn.addEventListener("click", async () => {
     if (state.busy) return;
     setBusy(true);
+    repairBtn.disabled = true;
     try {
       const manifest = await window.kopiaAPI.loadManifest(destRoot, sourceName);
       lostFiles.forEach((file) => delete manifest[file.path]);
       await window.kopiaAPI.saveManifest(destRoot, sourceName, manifest);
-      repairBtn.disabled = true;
       repairBtn.textContent = "Listos para recopiar";
       log(
         sourceName + ": " + lostFiles.length +
           " archivo(s) quitados del registro. Ve a la pestaña Backup, escanea y copia para recopiarlos."
       );
     } catch (error) {
+      // Falló la reparación: se rehabilita para que el usuario pueda reintentar.
+      repairBtn.disabled = false;
       log("No se pudo actualizar el registro: " + error.message);
     } finally {
       setBusy(false);
@@ -1334,6 +1355,7 @@ function renderMissingFilesCard(sourceName, localPath, missingFiles) {
   });
 
   restoreSelectedBtn.addEventListener("click", async () => {
+    if (state.busy) return;
     const toRestore = missingFiles.filter((file) => selection.get(file.path));
 
     if (!toRestore.length) {
@@ -1345,6 +1367,7 @@ function renderMissingFilesCard(sourceName, localPath, missingFiles) {
     if (!targetDir) return;
 
     setBusy(true);
+    restoreSelectedBtn.disabled = true;
     try {
       const avgSize = toRestore.reduce((t, f) => t + (f.size || 0), 0) / toRestore.length;
       let concurrency = 3;
@@ -1364,6 +1387,7 @@ function renderMissingFilesCard(sourceName, localPath, missingFiles) {
       log("Error en restauración: " + error.message);
     } finally {
       setBusy(false);
+      restoreSelectedBtn.disabled = false;
       hideProgress();
     }
   });
@@ -1426,6 +1450,7 @@ function renderFullRestoreRow(sourceName) {
     if (!targetDir) return;
 
     setBusy(true);
+    btn.disabled = true;
     try {
       const files = await window.kopiaAPI.restoreFullList(state.destination.root, sourceName);
       if (!files.length) {
@@ -1452,6 +1477,7 @@ function renderFullRestoreRow(sourceName) {
       log("Error al restaurar '" + sourceName + "': " + error.message);
     } finally {
       setBusy(false);
+      btn.disabled = false;
       hideProgress();
     }
   });
@@ -1528,6 +1554,7 @@ function applyPendingDestination() {
 }
 
 function clearHistory() {
+  if (state.busy) return;
   state.comparisons = [];
   renderComparisons();
   log("Vista de cambios borrada. El manifiesto guardado no se modificó, así que el próximo escaneo seguirá siendo incremental.");
