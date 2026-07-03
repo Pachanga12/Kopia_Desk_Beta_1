@@ -1,5 +1,7 @@
 # Kopia Desk
 
+[![CI](https://github.com/Pachanga12/Kopia_Desk_Beta_1/actions/workflows/ci.yml/badge.svg)](https://github.com/Pachanga12/Kopia_Desk_Beta_1/actions/workflows/ci.yml)
+
 Aplicación de escritorio para copias de seguridad incrementales en Windows. Permite respaldar carpetas como Imágenes, Documentos o Descargas a discos externos o USB.
 
 ## Cómo ejecutar
