@@ -80,9 +80,10 @@ como canal IPC.
 | `backup:plan-concurrency` | Detecta el tipo de disco (SSD/HDD/USB) y sugiere la concurrencia de copia |
 | `backup:copy-files` | Copia lotes de archivos con progreso en tiempo real; soporta deduplicación; registra un journal por operación |
 | `backup:copy-versions` | Guarda versiones anteriores comprimidas con gzip |
-| `journal:check` | Detecta un backup interrumpido en el destino y limpia los archivos parciales |
+| `journal:peek` | Informa si hay un backup interrumpido (y cuántos archivos parciales quedaron) sin borrar nada, para que la UI pida confirmación |
+| `journal:check` | Limpia los archivos parciales de un backup interrumpido (se ejecuta cuando el usuario confirma el aviso) |
 | `log:save` | Guarda un registro JSON de la operación |
-| `restore:scan` | Compara manifiesto vs estado actual del PC (pestaña "Comparar") |
+| `restore:scan` | Compara manifiesto vs estado actual del PC (pestaña "Comparar"); también detecta archivos que figuran como respaldados pero ya no están en el disco de backup (`lostFromBackup`) |
 | `restore:full-list` | Lista TODO el contenido de una carpeta del backup, sin comparar contra nada (pestaña "Restaurar") |
 | `restore:copy-files` | Restaura archivos del backup al PC |
 | `restore:list-sources` | Lista carpetas disponibles en el backup |
@@ -285,9 +286,11 @@ D:\KopiaDesk_Backup\
 - **Journal de operaciones**: antes de copiar, se escribe
   `.kopia-data/journal/<fecha>.json` con el estado de cada archivo (pendiente/
   hecho). Si la app se cierra abruptamente o el disco se desconecta a mitad de
-  copia, la próxima vez que se seleccione ese destino (`journal:check`) se
-  eliminan los archivos que quedaron a medio escribir, evitando que un backup
-  parcial se confunda con uno completo.
+  copia, la próxima vez que se seleccione ese destino la UI lo detecta con
+  `journal:peek`, muestra un aviso explicando qué pasó y, sólo si el usuario
+  confirma ("Continuar y limpiar"), `journal:check` elimina los archivos que
+  quedaron a medio escribir, evitando que un backup parcial se confunda con
+  uno completo. Si elige "Ahora no", se vuelve a avisar la próxima vez.
 - **Sin colisión de nombres entre carpetas origen**: el manifiesto y la
   carpeta de backup de cada origen se nombran con `safeName(source.name)`. Si
   dos carpetas distintas (p. ej. `C:\ProyectoA\Backup` y `D:\ProyectoB\Backup`)

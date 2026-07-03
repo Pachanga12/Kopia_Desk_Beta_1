@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("kopiaAPI", {
 
   planConcurrency: (driveRoot, avgFileSize) => ipcRenderer.invoke("backup:plan-concurrency", driveRoot, avgFileSize),
 
+  journalPeek: (destRoot) => ipcRenderer.invoke("journal:peek", destRoot),
   journalCheck: (destRoot) => ipcRenderer.invoke("journal:check", destRoot),
 
   backupCopyFiles: (tasks, options) => ipcRenderer.invoke("backup:copy-files", tasks, options),

@@ -19,6 +19,7 @@ const {
   startJournal,
   appendJournalDone,
   finishJournal,
+  peekJournals,
   checkJournals,
 } = require("./lib/core.js");
 
@@ -267,6 +268,12 @@ function journalDir(destRoot) {
   return path.join(destRoot, BACKUP_ROOT, METADATA_DIR, "journal");
 }
 
+// Peek: sólo informa si hay un backup interrumpido, sin tocar archivos. La
+// limpieza real (journal:check) se dispara cuando el usuario la confirma.
+ipcMain.handle("journal:peek", async (_event, destRoot) => {
+  return peekJournals(journalDir(destRoot));
+});
+
 ipcMain.handle("journal:check", async (_event, destRoot) => {
   return checkJournals(journalDir(destRoot), destRoot);
 });
@@ -415,6 +422,7 @@ ipcMain.handle("restore:scan", async (event, backupDrive, sourceName, localFolde
   const backupDir = path.join(backupDrive, BACKUP_ROOT, safeName(sourceName));
   const localFiles = await scanDirectoryRecursive(localFolderPath, "", compileExcludePatterns(DEFAULT_EXCLUDES));
   const missing = [];
+  const lostFromBackup = [];
   const total = Object.keys(manifest).length;
   let checked = 0;
 
@@ -428,6 +436,13 @@ ipcMain.handle("restore:scan", async (event, backupDrive, sourceName, localFolde
       missing.push({ ...fileInfo, backupFullPath: backupFilePath });
     }
 
+    // El manifiesto dice que está respaldado, pero el archivo ya no está en el
+    // disco de backup (borrado manual, disco dañado, etc.). Si no se reporta,
+    // el próximo escaneo de backup tampoco lo recopiaría — quedaría perdido.
+    if (!existsInBackup) {
+      lostFromBackup.push({ ...fileInfo, path: relativePath });
+    }
+
     if (checked % 50 === 0) {
       event.sender.send("progress", {
         phase: "restore-scan",
@@ -439,7 +454,7 @@ ipcMain.handle("restore:scan", async (event, backupDrive, sourceName, localFolde
     }
   }
 
-  return { missing, totalChecked: total };
+  return { missing, lostFromBackup, totalChecked: total };
 });
 
 ipcMain.handle("restore:copy-files", async (event, files, targetDir, options = {}) => {
