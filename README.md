@@ -1,15 +1,22 @@
-# Kopia Desk
+# 🗄️ Kopia Desk
+
+![Plataforma](https://img.shields.io/badge/plataforma-Windows-0078D6?logo=windows&logoColor=white)
+![Electron](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)
+![Node](https://img.shields.io/badge/Node-%E2%89%A5%2020-339933?logo=nodedotjs&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-31%20passing-brightgreen?logo=nodedotjs&logoColor=white)
+![Licencia](https://img.shields.io/badge/licencia-MIT-blue)
+[![CI](https://img.shields.io/github/actions/workflow/status/Pachanga12/Kopia_Desk_Beta_1/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/Pachanga12/Kopia_Desk_Beta_1/actions/workflows/ci.yml)
 
 Aplicación de escritorio para copias de seguridad incrementales en Windows. Permite respaldar carpetas como Imágenes, Documentos o Descargas a discos externos o USB.
 
-## Cómo ejecutar
+## 🚀 Cómo ejecutar
 
 ```powershell
 npm install
 npm start
 ```
 
-## Tests
+## 🧪 Tests
 
 La lógica de escaneo, hashing, exclusiones y rutas seguras vive en `lib/core.js`
 para poder testearla sin levantar Electron:
@@ -18,7 +25,7 @@ para poder testearla sin levantar Electron:
 npm test
 ```
 
-## Qué hace
+## ✨ Qué hace
 
 - Selección de carpetas origen mediante diálogo nativo de Windows, o con un
   clic desde los accesos rápidos a las carpetas típicas del usuario (Imágenes,
@@ -72,7 +79,7 @@ npm test
 > a simplemente cifrar la USB completa con BitLocker u otra herramienta a nivel
 > de disco — queda pendiente para más adelante si se retoma esa idea).
 
-## Estructura de backup en disco destino
+## 📁 Estructura de backup en disco destino
 
 ```
 D:\KopiaDesk_Backup\
@@ -84,14 +91,14 @@ D:\KopiaDesk_Backup\
     └── logs\                 ← registros JSON
 ```
 
-## Stack
+## 🧱 Stack
 
 - Electron (proceso principal + renderer aislado con contextBridge)
 - Node.js (fs, crypto, child_process)
 - HTML/CSS/JS vanilla (sin frameworks)
 - `node --test` para la suite de tests de `lib/core.js`
 
-## Empaquetar como instalador
+## 📦 Empaquetar como instalador
 
 ```powershell
 npm run build
