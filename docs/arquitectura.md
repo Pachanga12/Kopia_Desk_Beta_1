@@ -32,7 +32,7 @@ Kopia-Desk.v2/
 │
 ├── assets/Kopia_Desk_icon.png ← Icono de la app y del instalador
 │
-├── test/                      ← node --test (79 tests)
+├── test/                      ← node --test (83 tests)
 │   ├── core.test.js           ← Lógica base: rutas, exclusiones, escaneo, hash, journal
 │   ├── integridad.test.js     ← Problemas 1–5: copia atómica, dedup, escrituras atómicas
 │   ├── bitlocker.test.js      ← Lanzamiento del ayudante: argumentos, entrecomillado, estado
@@ -137,7 +137,9 @@ Kopia-Desk.v2/
   (enlaces/junctions, sin permiso, ilegibles).
 - **Copia**: `copyFileVerified` (copia nativa a `.kopia-tmp`, `fsync`, SHA-256 del
   origen y del temporal en paralelo, comprobación de que el origen no cambió,
-  fechas preservadas, `rename`), `linkAtomic`, `copyOneTask`.
+  fechas preservadas, `rename`), con hasta 3 reintentos con espera creciente
+  ante bloqueos pasajeros (`EBUSY`, `EAGAIN`, `ETXTBSY`) o una verificación
+  fallida, siempre sobre el temporal; `linkAtomic`, `copyOneTask`.
 - **Deduplicación**: `ContentIndex` (hash → ruta y ruta → hashes; toda escritura
   olvida los hashes viejos de esa ruta), `indexEntryMatches` (verifica por
   tamaño y SHA-256 antes de enlazar).
@@ -227,7 +229,7 @@ E:\KopiaDesk_Backup\
 
 ## Notas de desarrollo
 
-- `npm test` corre los 79 tests con `node --test`; no requiere Electron. El test
+- `npm test` corre los 83 tests con `node --test`; no requiere Electron. El test
   del ayudante de PowerShell sólo corre en Windows.
 - Con npm 11 o posterior el binario de Electron no se descarga solo: ejecutar una
   vez `node node_modules/electron/install.js`.

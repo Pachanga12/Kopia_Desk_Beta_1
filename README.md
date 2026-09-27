@@ -3,7 +3,7 @@
 [![CI](https://github.com/Pachanga12/Kopia-Desk.v2/actions/workflows/ci.yml/badge.svg)](https://github.com/Pachanga12/Kopia-Desk.v2/actions/workflows/ci.yml)
 ![Plataforma](https://img.shields.io/badge/plataforma-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-79-brightgreen?logo=nodedotjs&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-83-brightgreen?logo=nodedotjs&logoColor=white)
 [![Licencia](https://img.shields.io/badge/licencia-MIT-blue)](LICENSE)
 
 Aplicación de escritorio para copias de seguridad incrementales en Windows. Permite respaldar carpetas como Imágenes, Documentos o Descargas a discos externos o USB, y cifrar, desbloquear y bloquear el disco destino con BitLocker desde la propia app.
@@ -88,6 +88,7 @@ Genera `dist/Kopia Desk v2 Setup 2.0.0.exe` (instalador NSIS). El instalador **n
 - **Aviso de FAT32:** los archivos de 4 GB o más no caben en un disco FAT32; se avisan antes de copiar, se omiten y vuelven a aparecer en el próximo escaneo.
 - **Copia a `<disco>\KopiaDesk_Backup\<carpeta>\`** con concurrencia adaptada al tipo de disco (SSD/HDD; los pendrives USB copian de a un archivo, que en pruebas resultó más rápido que en paralelo).
 - **Copia atómica y verificada:** cada archivo se copia a un temporal `.kopia-tmp` junto al destino, se compara el SHA-256 del temporal contra el del origen, se comprueba que el origen no cambió durante la copia y recién entonces se renombra sobre el destino. Un corte a mitad nunca deja un archivo del backup truncado.
+- **Reintentos ante bloqueos pasajeros:** si un archivo está bloqueado un instante (antivirus, indexador de búsqueda, OneDrive), la copia se reintenta hasta 3 veces con espera creciente (80, 160 y 320 ms), siempre sobre el temporal: el archivo que ya estaba en el backup no se toca mientras tanto ni si al final falla. Errores que no se arreglan esperando (sin permiso, archivo inexistente, disco lleno) fallan al primer intento.
 - **El manifiesto solo registra lo que se copió y verificó**, con su SHA-256. Lo que falló (archivo en uso, disco lleno, etc.) vuelve a aparecer en el próximo escaneo.
 - **Deduplicación por contenido** (SHA-256 completo): si el archivo ya existe en el backup, se crea un hardlink en vez de copiar. Antes de enlazar se verifica por hash que el archivo indexado siga teniendo ese contenido. En exFAT/FAT32 no hay hardlinks y se copia normal.
 - **Versionado opcional:** antes de sobrescribir un archivo cambiado, guarda la versión anterior comprimida con gzip en `.kopia-data\versions\<fecha>\`.
@@ -275,7 +276,7 @@ Verificado en la app: pedir el hash de `C:\Windows\win.ini`, escanear `C:\Window
 ## Limitaciones
 
 - **Sin cifrado propio del backup.** Depende de cifrar el disco (ver sección de cifrado).
-- **Sin archivos en uso.** Archivos bloqueados (Outlook abierto, bases de datos activas) fallan con un mensaje claro ("Archivo en uso por otro programa") y se reintentan en el próximo backup. No se usa Volume Shadow Copy.
+- **Sin archivos en uso.** Los bloqueos de milisegundos se superan con reintentos, pero un archivo que sigue abierto (Outlook, bases de datos activas) falla con un mensaje claro ("Archivo en uso por otro programa"), conserva en el backup su versión anterior y se reintenta en el próximo backup. No se usa Volume Shadow Copy.
 - **Sin programación.** Los backups son manuales.
 - **Sin interfaz para restaurar versiones anteriores.** Existen como `.gz` en una carpeta oculta.
 - **Sin retención.** Los archivos eliminados del origen y las versiones anteriores se acumulan para siempre.

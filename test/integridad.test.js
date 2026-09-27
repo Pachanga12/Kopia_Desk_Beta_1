@@ -130,6 +130,83 @@ test("copyFileVerified: un origen de sólo lectura se puede respaldar dos veces"
   assert.equal(fs.readFileSync(dest, "utf-8"), "v2 más largo");
 });
 
+// --- Reintentos ante bloqueos pasajeros -------------------------------------------
+
+// Hace fallar las primeras `n` copias con `code` (como un antivirus que tiene el
+// archivo abierto) y anota qué había en el destino en cada intento.
+function simularBloqueo(t, dest, n, code = "EBUSY") {
+  const original = fs.promises.copyFile;
+  const intentos = [];
+  fs.promises.copyFile = async (s, d) => {
+    intentos.push(fs.existsSync(dest) ? fs.readFileSync(dest, "utf-8") : "(NO EXISTE)");
+    if (intentos.length <= n) {
+      const e = new Error(code + " (simulado)");
+      e.code = code;
+      throw e;
+    }
+    return original(s, d);
+  };
+  t.after(() => (fs.promises.copyFile = original));
+  return intentos;
+}
+
+test("copyFileVerified reintenta un bloqueo pasajero sin tocar nunca la copia buena del destino", async (t) => {
+  const [dir] = tempDirs(t, 1);
+  const src = path.join(dir, "correo.pst");
+  const dest = path.join(dir, "backup.pst");
+  fs.writeFileSync(src, "v2 nueva");
+  fs.writeFileSync(dest, "v1 buena");
+  const intentos = simularBloqueo(t, dest, 2);
+  await copyFileVerified(src, dest, { delayMs: 5 });
+  assert.deepEqual(intentos, ["v1 buena", "v1 buena", "v1 buena"], "la copia buena sigue en cada intento");
+  assert.equal(fs.readFileSync(dest, "utf-8"), "v2 nueva");
+  assert.ok(!fs.existsSync(dest + TMP_SUFFIX));
+});
+
+test("copyFileVerified: si el bloqueo no se libera, agota los reintentos y la copia buena sigue intacta", async (t) => {
+  const [dir] = tempDirs(t, 1);
+  const src = path.join(dir, "correo.pst");
+  const dest = path.join(dir, "backup.pst");
+  fs.writeFileSync(src, "v2 nueva");
+  fs.writeFileSync(dest, "v1 buena");
+  const intentos = simularBloqueo(t, dest, 99);
+  await assert.rejects(copyFileVerified(src, dest, { retries: 3, delayMs: 5 }), (e) => e.code === "EBUSY");
+  assert.equal(intentos.length, 4, "1 intento + 3 reintentos");
+  assert.equal(fs.readFileSync(dest, "utf-8"), "v1 buena");
+  assert.ok(!fs.existsSync(dest + TMP_SUFFIX));
+});
+
+test("copyFileVerified no reintenta errores que no son pasajeros (p. ej. sin permiso)", async (t) => {
+  const [dir] = tempDirs(t, 1);
+  const src = path.join(dir, "a.txt");
+  const dest = path.join(dir, "b.txt");
+  fs.writeFileSync(src, "nuevo");
+  fs.writeFileSync(dest, "v1 buena");
+  const intentos = simularBloqueo(t, dest, 99, "EACCES");
+  await assert.rejects(copyFileVerified(src, dest, { delayMs: 5 }), (e) => e.code === "EACCES");
+  assert.equal(intentos.length, 1);
+  assert.equal(fs.readFileSync(dest, "utf-8"), "v1 buena");
+});
+
+test("copyFileVerified supera un bloqueo real de Windows de 300 ms", { skip: process.platform !== "win32" }, async (t) => {
+  const [dir] = tempDirs(t, 1);
+  const src = path.join(dir, "correo.pst");
+  const dest = path.join(dir, "backup.pst");
+  fs.writeFileSync(src, "v2 nueva " + "x".repeat(1000));
+  fs.writeFileSync(dest, "v1 buena");
+  const { spawn } = require("child_process");
+  const ps = spawn("powershell.exe", [
+    "-NoProfile",
+    "-Command",
+    `$f = [IO.File]::Open('${src}', 'Open', 'Read', 'None'); 'LOCKED'; Start-Sleep -Milliseconds 300; $f.Close()`,
+  ]);
+  t.after(() => ps.kill());
+  await new Promise((resolve) => ps.stdout.on("data", (d) => String(d).includes("LOCKED") && resolve()));
+  const r = await copyFileVerified(src, dest); // reintentos por defecto: 80 + 160 + 320 ms
+  assert.equal(fs.readFileSync(dest, "utf-8"), fs.readFileSync(src, "utf-8"));
+  assert.equal(r.size, fs.statSync(src).size);
+});
+
 // --- Problema 2: sobrescribir un hardlink no altera sus otros enlaces --------------
 
 test("problema 2: sobrescribir un archivo enlazado no cambia el contenido de sus enlaces", async (t) => {
