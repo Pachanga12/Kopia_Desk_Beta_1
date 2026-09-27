@@ -1,15 +1,32 @@
-# Kopia Desk
+# Kopia Desk v2
+
+[![CI](https://github.com/Pachanga12/Kopia_Desk_v2/actions/workflows/ci.yml/badge.svg)](https://github.com/Pachanga12/Kopia_Desk_v2/actions/workflows/ci.yml)
+![Plataforma](https://img.shields.io/badge/plataforma-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
+![Electron](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-79-brightgreen?logo=nodedotjs&logoColor=white)
+[![Licencia](https://img.shields.io/badge/licencia-MIT-blue)](LICENSE)
 
 Aplicación de escritorio para copias de seguridad incrementales en Windows. Permite respaldar carpetas como Imágenes, Documentos o Descargas a discos externos o USB, y cifrar, desbloquear y bloquear el disco destino con BitLocker desde la propia app.
 
-> **Estado: beta.** Este README documenta lo que la app hace hoy, los problemas detectados en revisión de código (y cuáles ya están corregidos), y el trabajo pendiente. Antes de confiarle datos que no puedas perder, lee las secciones [Problemas conocidos](#problemas-conocidos) y [Limitaciones](#limitaciones).
+> **Estado: versión 2.0.** Este README documenta lo que la app hace hoy, los problemas detectados en revisión de código (y cuáles ya están corregidos), y el trabajo pendiente. Antes de confiarle datos que no puedas perder, lee las secciones [Problemas conocidos](#problemas-conocidos) y [Limitaciones](#limitaciones).
 
 Kopia Desk es un proyecto independiente. No tiene relación con [Kopia](https://kopia.io) (la herramienta de backup en Go).
 
 ---
 
+## Descargar
+
+El instalador para Windows está en **[Releases](https://github.com/Pachanga12/Kopia_Desk_v2/releases/latest)**: descarga `Kopia.Desk.v2.Setup.2.0.0.exe` y ejecútalo.
+
+- El instalador **no está firmado**: Windows SmartScreen puede mostrar "Windows protegió su PC". Pulsa **Más información → Ejecutar de todas formas**.
+- Cifrar o bloquear un disco con BitLocker pide el permiso de administrador de Windows en ese momento; el resto de la app no lo necesita.
+- Para más detalle técnico del código, ver [docs/arquitectura.md](docs/arquitectura.md).
+
+---
+
 ## Índice
 
+1. [Descargar](#descargar)
 1. [Cómo ejecutar](#cómo-ejecutar)
 2. [Qué hace](#qué-hace)
 3. [Estructura de backup en disco destino](#estructura-de-backup-en-disco-destino)
@@ -43,15 +60,16 @@ La lógica de escaneo, hashing, copia verificada, deduplicación, exclusiones, j
 npm test
 ```
 
-`test/core.test.js` cubre la lógica base; `test/integridad.test.js` cubre los arreglos de integridad (problemas 1 a 5), el informe de escaneo y la detección de disco y cifrado; `test/bitlocker.test.js` cubre el lanzamiento del ayudante de BitLocker. El ayudante en sí (`lib/bitlocker-helper.ps1`) necesita administrador y se probó contra discos virtuales (ver [Plan de pruebas](#plan-de-pruebas)).
+`test/core.test.js` cubre la lógica base; `test/integridad.test.js` cubre los arreglos de integridad (problemas 1 a 5), el informe de escaneo y la detección de disco y cifrado; `test/bitlocker.test.js` cubre el lanzamiento del ayudante de BitLocker; `test/disco-sistema.test.js` cubre la protección del disco del sistema y los cambios de disco. El ayudante en sí (`lib/bitlocker-helper.ps1`) necesita administrador y se probó contra discos virtuales (ver [Plan de pruebas](#plan-de-pruebas)). Los tests corren en cada push en GitHub Actions (Windows, Node 20 y 22).
 
 ### Empaquetar como instalador
 
-```bash
+```powershell
+$env:CSC_IDENTITY_AUTO_DISCOVERY = "false"   # sin certificado de firma
 npm run build
 ```
 
-Genera un instalador NSIS en `dist/`. El instalador **no está firmado** todavía (ver [Seguridad](#seguridad)).
+Genera `dist/Kopia Desk v2 Setup 2.0.0.exe` (instalador NSIS). El instalador **no está firmado** todavía (ver [Seguridad](#seguridad)). Más detalles en [docs/arquitectura.md](docs/arquitectura.md#notas-de-desarrollo).
 
 ---
 

@@ -2220,4 +2220,4 @@ loadQuickFolders();
 loadState().then(() => {
   loadDrives().then(applyPendingDestination).catch((e) => log(e.message));
 });
-log("Kopia Desk iniciado.");
+log("Kopia Desk v2 iniciado.");

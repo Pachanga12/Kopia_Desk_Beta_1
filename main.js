@@ -65,7 +65,7 @@ function createWindow() {
     height: 820,
     minWidth: 960,
     minHeight: 640,
-    title: "Kopia Desk",
+    title: "Kopia Desk v2",
     icon: path.join(__dirname, "assets", "Kopia_Desk_icon.png"),
     backgroundColor: "#0b1220",
     frame: false,

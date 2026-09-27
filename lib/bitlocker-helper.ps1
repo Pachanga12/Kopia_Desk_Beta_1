@@ -1,4 +1,4 @@
-﻿# Kopia Desk - ayudante de BitLocker.
+﻿# Kopia Desk v2 - ayudante de BitLocker.
 #
 # La app lo lanza ELEVADO (Start-Process -Verb RunAs) sólo para la operación
 # pedida; la app en sí nunca corre como administrador. Nada secreto viaja por
@@ -173,7 +173,7 @@ function New-KdButton([string]$Text, [int]$X, [int]$Y, [int]$W) {
 # Devuelve la contraseña elegida, o $null si se cancela.
 function Show-KdPasswordDialog([string]$DriveLabel) {
   $mp = Get-KdMountPoint
-  $form = New-KdForm "Kopia Desk - Contraseña para $mp" 470 330
+  $form = New-KdForm "Kopia Desk v2 - Contraseña para $mp" 470 330
 
   $form.Controls.Add((New-KdLabel ("Elige la contraseña del disco $mp $DriveLabel. Te la pedirá cada vez que lo conectes, " +
         'en este o en otro equipo con Windows.') 16 14 438 44))
@@ -246,7 +246,7 @@ function Show-KdPasswordDialog([string]$DriveLabel) {
 # o copiarla) antes de dejar continuar. Devuelve $true si se confirma.
 function Show-KdRecoveryDialog([string]$Key, [string]$DriveLabel) {
   $mp = Get-KdMountPoint
-  $form = New-KdForm "Kopia Desk - Clave de recuperación de $mp" 540 360
+  $form = New-KdForm "Kopia Desk v2 - Clave de recuperación de $mp" 540 360
 
   $title = New-KdLabel 'Guarda tu clave de recuperación' 16 12 508 26
   $title.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold)
@@ -301,11 +301,11 @@ function Show-KdRecoveryDialog([string]$Key, [string]$DriveLabel) {
       if ($root -ieq "$mp\") {
         [System.Windows.Forms.MessageBox]::Show($form,
           "No guardes la clave en el disco que vas a cifrar: si no lo puedes abrir, tampoco podrías leer la clave. Elige otro disco.",
-          'Kopia Desk', 'OK', 'Warning') | Out-Null
+          'Kopia Desk v2', 'OK', 'Warning') | Out-Null
         return
       }
       $content = @(
-        'Clave de recuperación de BitLocker (creada con Kopia Desk)'
+        'Clave de recuperación de BitLocker (creada con Kopia Desk v2)'
         "Disco: $mp $DriveLabel"
         "Fecha: $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
         ''
