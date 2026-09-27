@@ -14,7 +14,7 @@ cifrar, desbloquear y bloquear) sin tocar nunca el disco donde está Windows.
 ## Mapa del proyecto
 
 ```
-Kopia-Desk/
+Kopia_Desk_Beta_1/
 ├── main.js                    ← Proceso principal de Electron: único que toca disco y sistema
 ├── preload.js                 ← Puente seguro: lista exacta de lo que la interfaz puede pedir
 ├── package.json               ← Nombre, versión, scripts y configuración del instalador
