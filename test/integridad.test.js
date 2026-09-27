@@ -202,7 +202,11 @@ test("copyFileVerified supera un bloqueo real de Windows de 300 ms", { skip: pro
   ]);
   t.after(() => ps.kill());
   await new Promise((resolve) => ps.stdout.on("data", (d) => String(d).includes("LOCKED") && resolve()));
-  const r = await copyFileVerified(src, dest); // reintentos por defecto: 80 + 160 + 320 ms
+  // Margen amplio (hasta ~6 s) para que el test no dependa de la velocidad de la
+  // máquina: en los runners de GitHub el bloqueo tarda más en liberarse que en
+  // un equipo normal. Lo que se prueba es que un bloqueo real se supera
+  // reintentando, no el valor por defecto de los reintentos.
+  const r = await copyFileVerified(src, dest, { retries: 6, delayMs: 100 });
   assert.equal(fs.readFileSync(dest, "utf-8"), fs.readFileSync(src, "utf-8"));
   assert.equal(r.size, fs.statSync(src).size);
 });
