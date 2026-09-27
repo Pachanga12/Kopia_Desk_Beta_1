@@ -1,6 +1,6 @@
 # Kopia Desk v2
 
-[![CI](https://github.com/Pachanga12/Kopia-Desk-v2.3/actions/workflows/ci.yml/badge.svg)](https://github.com/Pachanga12/Kopia-Desk-v2.3/actions/workflows/ci.yml)
+[![CI](https://github.com/Pachanga12/Kopia-Desk/actions/workflows/ci.yml/badge.svg)](https://github.com/Pachanga12/Kopia-Desk/actions/workflows/ci.yml)
 ![Plataforma](https://img.shields.io/badge/plataforma-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-113-brightgreen?logo=nodedotjs&logoColor=white)
@@ -16,7 +16,7 @@ Kopia Desk es un proyecto independiente. No tiene relación con [Kopia](https://
 
 ## Descargar
 
-El instalador para Windows está en **[Releases](https://github.com/Pachanga12/Kopia-Desk-v2.3/releases/latest)**: descarga `Kopia.Desk.v2.Setup.2.3.0.exe` y ejecútalo.
+El instalador para Windows está en **[Releases](https://github.com/Pachanga12/Kopia-Desk/releases/latest)**: descarga `Kopia.Desk.v2.Setup.2.3.0.exe` y ejecútalo.
 
 - El instalador **no está firmado**: Windows SmartScreen puede mostrar "Windows protegió su PC". Pulsa **Más información → Ejecutar de todas formas**.
 - Cifrar o bloquear un disco con BitLocker pide el permiso de administrador de Windows en ese momento; el resto de la app no lo necesita.
