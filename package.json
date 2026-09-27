@@ -2,13 +2,13 @@
   "name": "kopia-desk",
   "version": "2.0.0",
   "description": "Kopia Desk v2: copias de seguridad incrementales para Windows, con copia verificada y cifrado BitLocker del disco destino",
-  "homepage": "https://github.com/Pachanga12/Kopia_Desk_v2#readme",
+  "homepage": "https://github.com/Pachanga12/Kopia-Desk.v2#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Pachanga12/Kopia_Desk_v2.git"
+    "url": "https://github.com/Pachanga12/Kopia-Desk.v2.git"
   },
   "bugs": {
-    "url": "https://github.com/Pachanga12/Kopia_Desk_v2/issues"
+    "url": "https://github.com/Pachanga12/Kopia-Desk.v2/issues"
   },
   "main": "main.js",
   "scripts": {
