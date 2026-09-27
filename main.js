@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, nativeTheme, screen } = require("electron");
 const path = require("path");
 // "original-fs": el fs sin el parche de Electron que trata los .asar como
 // carpetas (ver lib/core.js). Las rutas del backup pueden contener .asar.
@@ -60,14 +60,24 @@ const QUICK_FOLDERS = [
 let mainWindow = null;
 
 function createWindow() {
+  // 1220×740 como máximo, pero sin pasarse nunca del área útil del monitor
+  // (sin la barra de tareas): en un portátil de 1366×768 el alto útil es
+  // ~720 px y una ventana fija de 740 quedaría tapada por la barra de tareas.
+  const area = screen.getPrimaryDisplay().workAreaSize;
+  const width = Math.min(1220, area.width - 40);
+  const height = Math.min(740, area.height - 24);
   mainWindow = new BrowserWindow({
-    width: 1300,
-    height: 820,
-    minWidth: 960,
-    minHeight: 640,
+    width,
+    height,
+    minWidth: Math.min(960, width),
+    minHeight: Math.min(600, height),
+    center: true,
     title: "Kopia Desk v2",
     icon: path.join(__dirname, "assets", "Kopia_Desk_icon.png"),
-    backgroundColor: "#0b1220",
+    // Fondo mientras carga la interfaz: el del tema de Windows (colores --bg de
+    // styles.css), para que no haya un destello blanco en modo oscuro ni
+    // oscuro en modo claro.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#090e1a" : "#f8fafc",
     frame: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -85,9 +95,25 @@ function createWindow() {
 
   mainWindow.on("maximize", () => mainWindow.webContents.send("window:state", { maximized: true }));
   mainWindow.on("unmaximize", () => mainWindow.webContents.send("window:state", { maximized: false }));
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
 }
 
-app.whenReady().then(createWindow);
+// Instancia única: dos Kopia Desk abiertas a la vez escribirían sobre los
+// mismos manifiestos, índice y configuración y podrían pisarse. Si ya hay una,
+// esta se cierra y se trae al frente la ventana existente.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+  app.whenReady().then(createWindow);
+}
 app.on("window-all-closed", () => app.quit());
 
 // --- Ventana sin marco: controles propios (minimizar/maximizar/cerrar) -----

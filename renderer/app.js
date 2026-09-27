@@ -1435,13 +1435,18 @@ function fileGroup(title, files, hint) {
 }
 
 function computePlannedBytes() {
+  // Los archivos que no caben en el sistema de archivos destino (FAT32: 4 GB)
+  // se omiten al copiar, así que no cuentan para el espacio necesario: si no,
+  // un solo archivo grande bloquearía por "falta de espacio" todo el backup.
+  const max = (state.destination && state.destination.maxFileSize) || 0;
+  const sumar = (files) => files.reduce((t, f) => t + (max && f.size > max ? 0 : f.size), 0);
   let bytes = 0;
   for (const comparison of state.comparisons) {
     if (comparison.decisions.new) {
-      bytes += comparison.newFiles.reduce((t, f) => t + f.size, 0);
+      bytes += sumar(comparison.newFiles);
     }
     if (comparison.decisions.changed) {
-      const changedBytes = comparison.changedFiles.reduce((t, f) => t + f.size, 0);
+      const changedBytes = sumar(comparison.changedFiles);
       bytes += changedBytes;
       if (els.versioningToggle.checked) bytes += changedBytes; // copia adicional de versión
     }

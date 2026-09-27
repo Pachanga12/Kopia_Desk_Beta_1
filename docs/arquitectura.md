@@ -14,7 +14,7 @@ cifrar, desbloquear y bloquear) sin tocar nunca el disco donde está Windows.
 ## Mapa del proyecto
 
 ```
-Kopia-Desk.v2/
+Kopia-Desk-v2.1/
 ├── main.js                    ← Proceso principal de Electron: único que toca disco y sistema
 ├── preload.js                 ← Puente seguro: lista exacta de lo que la interfaz puede pedir
 ├── package.json               ← Nombre, versión, scripts y configuración del instalador
@@ -43,7 +43,9 @@ Kopia-Desk.v2/
 │   ├── arquitectura.md        ← Este archivo
 │   └── design-reference/      ← Mockup de referencia visual (no se integra tal cual)
 │
-├── .github/workflows/ci.yml   ← Tests automáticos en GitHub Actions (Windows, Node 20 y 22)
+├── .github/workflows/
+│   ├── ci.yml                 ← Lint y tests en GitHub Actions (Windows y Ubuntu, Node 20 y 22)
+│   └── release.yml            ← Compila y publica el instalador al subir un tag vX.Y.Z
 ├── LICENSE                    ← MIT
 └── dist/                      ← Lo genera `npm run build` (instalador); no se sube al repo
 ```
@@ -75,6 +77,8 @@ Kopia-Desk.v2/
 1. **Ventana**: sin marco (controles propios), `contextIsolation: true`,
    `nodeIntegration: false`, `sandbox: true`; se bloquean ventanas nuevas
    (`setWindowOpenHandler` → `deny`) y la navegación (`will-navigate`).
+   **Instancia única** (`requestSingleInstanceLock`): una segunda apertura se
+   cierra y trae al frente la ventana existente.
 2. **Validación de rutas** (lista blanca en memoria, `allowed`):
    - discos destino: sólo los que devuelve `listDrives`;
    - orígenes: sólo carpetas elegidas por diálogo, accesos rápidos o guardadas en
@@ -229,6 +233,9 @@ E:\KopiaDesk_Backup\
 
 ## Notas de desarrollo
 
+- `npm run lint` comprueba la sintaxis de los archivos principales (`node --check`).
+- Los estilos van siempre en `renderer/styles.css`: la CSP (`style-src 'self'`)
+  bloquea los atributos `style="..."` del HTML (por eso existen utilidades como `.mt-14`).
 - `npm test` corre los 83 tests con `node --test`; no requiere Electron. El test
   del ayudante de PowerShell sólo corre en Windows.
 - Con npm 11 o posterior el binario de Electron no se descarga solo: ejecutar una

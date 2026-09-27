@@ -1,6 +1,6 @@
 # Kopia Desk v2
 
-[![CI](https://github.com/Pachanga12/Kopia-Desk.v2/actions/workflows/ci.yml/badge.svg)](https://github.com/Pachanga12/Kopia-Desk.v2/actions/workflows/ci.yml)
+[![CI](https://github.com/Pachanga12/Kopia-Desk-v2.1/actions/workflows/ci.yml/badge.svg)](https://github.com/Pachanga12/Kopia-Desk-v2.1/actions/workflows/ci.yml)
 ![Plataforma](https://img.shields.io/badge/plataforma-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-83-brightgreen?logo=nodedotjs&logoColor=white)
@@ -16,7 +16,7 @@ Kopia Desk es un proyecto independiente. No tiene relación con [Kopia](https://
 
 ## Descargar
 
-El instalador para Windows está en **[Releases](https://github.com/Pachanga12/Kopia-Desk.v2/releases/latest)**: descarga `Kopia.Desk.v2.Setup.2.0.0.exe` y ejecútalo.
+El instalador para Windows está en **[Releases](https://github.com/Pachanga12/Kopia-Desk-v2.1/releases/latest)**: descarga `Kopia.Desk.v2.Setup.2.1.0.exe` y ejecútalo.
 
 - El instalador **no está firmado**: Windows SmartScreen puede mostrar "Windows protegió su PC". Pulsa **Más información → Ejecutar de todas formas**.
 - Cifrar o bloquear un disco con BitLocker pide el permiso de administrador de Windows en ese momento; el resto de la app no lo necesita.
@@ -58,9 +58,10 @@ La lógica de escaneo, hashing, copia verificada, deduplicación, exclusiones, j
 
 ```bash
 npm test
+npm run lint   # comprobación de sintaxis de main, preload, core y renderer
 ```
 
-`test/core.test.js` cubre la lógica base; `test/integridad.test.js` cubre los arreglos de integridad (problemas 1 a 5), el informe de escaneo y la detección de disco y cifrado; `test/bitlocker.test.js` cubre el lanzamiento del ayudante de BitLocker; `test/disco-sistema.test.js` cubre la protección del disco del sistema y los cambios de disco. El ayudante en sí (`lib/bitlocker-helper.ps1`) necesita administrador y se probó contra discos virtuales (ver [Plan de pruebas](#plan-de-pruebas)). Los tests corren en cada push en GitHub Actions (Windows, Node 20 y 22).
+`test/core.test.js` cubre la lógica base; `test/integridad.test.js` cubre los arreglos de integridad (problemas 1 a 5), el informe de escaneo y la detección de disco y cifrado; `test/bitlocker.test.js` cubre el lanzamiento del ayudante de BitLocker; `test/disco-sistema.test.js` cubre la protección del disco del sistema y los cambios de disco. El ayudante en sí (`lib/bitlocker-helper.ps1`) necesita administrador y se probó contra discos virtuales (ver [Plan de pruebas](#plan-de-pruebas)). Los tests y el lint corren en cada push en GitHub Actions (Windows y Ubuntu, Node 20 y 22); en Ubuntu se omiten los que dependen de Windows (letras de unidad, PowerShell, bloqueos de archivo reales).
 
 ### Empaquetar como instalador
 
@@ -69,7 +70,9 @@ $env:CSC_IDENTITY_AUTO_DISCOVERY = "false"   # sin certificado de firma
 npm run build
 ```
 
-Genera `dist/Kopia Desk v2 Setup 2.0.0.exe` (instalador NSIS). El instalador **no está firmado** todavía (ver [Seguridad](#seguridad)). Más detalles en [docs/arquitectura.md](docs/arquitectura.md#notas-de-desarrollo).
+Genera `dist/Kopia Desk v2 Setup 2.1.0.exe` (instalador NSIS). El instalador **no está firmado** todavía (ver [Seguridad](#seguridad)). Más detalles en [docs/arquitectura.md](docs/arquitectura.md#notas-de-desarrollo).
+
+En GitHub, `.github/workflows/release.yml` compila y publica el instalador automáticamente al subir un tag de versión (por ejemplo `v2.1.1`), o a mano desde la pestaña *Actions*.
 
 ---
 
@@ -97,6 +100,7 @@ Genera `dist/Kopia Desk v2 Setup 2.0.0.exe` (instalador NSIS). El instalador **n
 - **Pestaña Comparar:** compara carpetas del backup contra carpetas locales elegidas, detecta faltantes y permite restaurar solo esos. Detecta archivos que figuran como respaldados pero ya no están en el disco de backup.
 - **Pestaña Restaurar:** trae una carpeta completa del backup a cualquier ubicación, útil tras formatear o con otro perfil de Windows. La restauración usa la misma copia verificada.
 - **Tema claro/oscuro**, ventana sin marco con controles propios y persistencia de configuración.
+- **Instancia única:** si Kopia Desk ya está abierta, abrirla de nuevo trae al frente la ventana existente en vez de abrir otra (dos instancias podrían pisarse los manifiestos y la configuración).
 
 ---
 
@@ -313,7 +317,7 @@ Verificado en la app: pedir el hash de `C:\Windows\win.ini`, escanear `C:\Window
 - **Metadatos no copiados:** ACLs, flujos de datos alternos (ADS), atributos (incluido sólo lectura).
 - ✅ **Preservación de fechas** al copiar y al restaurar.
 - **Suspensión o hibernación** del equipo durante un backup largo.
-- **Dos instancias de la app** sobre el mismo destino: bloquear con un archivo lock en `.kopia-data`.
+- ✅ **Dos instancias de la app en el mismo equipo:** resuelto con instancia única (`requestSingleInstanceLock`). Pendiente: dos equipos usando el mismo disco a la vez (un archivo lock en `.kopia-data`).
 
 ### Restauración
 

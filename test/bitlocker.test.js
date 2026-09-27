@@ -44,7 +44,8 @@ test("buildHelperLaunchScript exige una identidad de volumen válida y la pasa a
 
 test("bitlockerHelperPath usa app.asar.unpacked dentro del instalador", () => {
   const p = bitlockerHelperPath("C:\\Program Files\\Kopia Desk\\resources\\app.asar\\lib");
-  assert.equal(p, "C:\\Program Files\\Kopia Desk\\resources\\app.asar.unpacked\\lib\\bitlocker-helper.ps1");
+  // path.join pone el separador del sistema: se compara igual en Windows y en Linux (CI).
+  assert.equal(p, path.join("C:\\Program Files\\Kopia Desk\\resources\\app.asar.unpacked\\lib", "bitlocker-helper.ps1"));
   assert.equal(bitlockerHelperPath("C:\\dev\\kopia\\lib"), path.join("C:\\dev\\kopia\\lib", "bitlocker-helper.ps1"));
 });
 
