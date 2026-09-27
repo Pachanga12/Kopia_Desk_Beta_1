@@ -7,10 +7,12 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
-const { mapVolume, isProtectedSystemVolume, checkBitLockerTarget, isValidVolumeId } = require("../lib/core.js");
+const { mapVolume, isProtectedSystemVolume, checkBitLockerTarget, isValidVolumeId, driveIdentityChanged } = require("../lib/core.js");
 
 const VOL_USB = "\\\\?\\Volume{aaaaaaaa-0000-0000-0000-000000000001}\\";
 const VOL_OTRO_USB = "\\\\?\\Volume{bbbbbbbb-0000-0000-0000-000000000002}\\";
@@ -116,6 +118,37 @@ for (const [nombre, discos, letra, elegido, esperado] of escenarios) {
   });
 }
 
+// --- driveIdentityChanged: misma protección que BitLocker, para backups normales ---
+// Hallazgo de la auditoría: backup:copy-files sólo comprobaba que la LETRA
+// siguiera montada (assertDestRoot), nunca que fuera el MISMO disco físico.
+// Si el usuario cambiaba el USB a mitad de un backup grande por otro que
+// Windows le asigna la misma letra, el resto de los archivos se iban al disco
+// nuevo sin ningún aviso. driveIdentityChanged() es la pieza que lo detecta.
+
+test("driveIdentityChanged: sin volumeId esperado, no hay nada que comparar (compatibilidad)", () => {
+  assert.equal(driveIdentityChanged(equipo, "E", undefined), false);
+  assert.equal(driveIdentityChanged(equipo, "E", ""), false);
+});
+
+test("driveIdentityChanged: mismo volumen, no cambió", () => {
+  assert.equal(driveIdentityChanged(equipo, "E", VOL_USB), false);
+});
+
+test("driveIdentityChanged: se cambió el USB por otro con la misma letra", () => {
+  const discosNuevos = [equipo[0], equipo[1], volume("E", 3, false, VOL_OTRO_USB)];
+  assert.equal(driveIdentityChanged(discosNuevos, "E", VOL_USB), true);
+});
+
+test("driveIdentityChanged: el disco se desconectó (ya no está la letra) -> desconocido, no 'cambió'", () => {
+  // A propósito no es `true`: no se puede distinguir de un hipo al leer la
+  // lista de discos, y aquí se prefiere no bloquear un backup por las dudas.
+  assert.equal(driveIdentityChanged([equipo[0], equipo[1]], "E", VOL_USB), null);
+});
+
+test("driveIdentityChanged: no distingue mayúsculas de la letra", () => {
+  assert.equal(driveIdentityChanged(equipo, "e", VOL_USB), false);
+});
+
 // --- Capa del ayudante elevado (misma tabla, con datos simulados) --------------
 
 const HELPER = path.join(__dirname, "..", "lib", "bitlocker-helper.ps1");
@@ -157,3 +190,105 @@ test("ayudante: mismas decisiones que la app en todos los escenarios", { skip: p
     assert.equal(obtenido, esperado, "ayudante: " + nombre);
   });
 });
+
+// --- Auditoría: invocar el .ps1 REAL directamente, sin pasar por main.js -------
+// Todo lo de arriba prueba Test-KdTargetAllowed llamada a mano con datos
+// simulados (-Action Import). Esto va un paso más allá: ejecuta el archivo
+// .ps1 tal cual lo haría un atacante que se salta main.js/buildHelperLaunchScript
+// por completo, con -Action Encrypt de verdad y la letra/VolumeId reales de
+// ESTA máquina. Nunca llega a tocar BitLocker (Assert-KdTarget corta antes),
+// así que es seguro correrlo contra el disco C: real.
+
+function runHelperDirect(args) {
+  const HELPER = path.join(__dirname, "..", "lib", "bitlocker-helper.ps1");
+  const statusFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "kopia-bl-direct-")), "status.json");
+  try {
+    execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-File", HELPER, "-StatusFile", statusFile, ...args],
+      { encoding: "utf-8", timeout: 15000 }
+    );
+    return { exitCode: 0, status: JSON.parse(fs.readFileSync(statusFile, "utf-8")) };
+  } catch (err) {
+    let status = null;
+    try {
+      status = JSON.parse(fs.readFileSync(statusFile, "utf-8"));
+    } catch {
+      // el proceso pudo morir antes de escribir el status (p. ej. rechazado
+      // por PowerShell al validar parámetros, ni siquiera llegó a correr)
+    }
+    return { exitCode: err.status, status, stderr: String(err.stderr || "") };
+  } finally {
+    fs.rmSync(path.dirname(statusFile), { recursive: true, force: true });
+  }
+}
+
+test(
+  "ayudante real: -Drive con intento de inyección se rechaza en el binding de PowerShell, antes de correr una sola línea del script",
+  { skip: process.platform !== "win32" },
+  () => {
+    const r = runHelperDirect([
+      "-Action",
+      "Encrypt",
+      "-Drive",
+      "C; calc",
+      "-VolumeId",
+      "\\\\?\\Volume{12345678-9abc-def0-1234-56789abcdef0}\\",
+    ]);
+    assert.notEqual(r.exitCode, 0);
+    assert.equal(r.status, null, "no debe llegar a escribir ningun status: se rechaza antes de ejecutar el script");
+    // El mensaje de PowerShell trae acentos que el pipe de execFileSync a
+    // veces entrega con otra codepage; se busca la parte ASCII inequívoca.
+    assert.match(r.stderr, /ParameterArgumentValidationError/);
+  }
+);
+
+test(
+  "ayudante real: -Action Encrypt sobre C: con su VolumeId REAL se rechaza (system-disk), sin abrir ningún diálogo",
+  { skip: process.platform !== "win32" },
+  () => {
+    const realVolumeId = execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", "(Get-Volume -DriveLetter C).UniqueId"],
+      { encoding: "utf-8" }
+    ).trim();
+    assert.ok(isValidVolumeId(realVolumeId), "precondición: necesitamos el VolumeId real de C: para esta prueba");
+
+    const r = runHelperDirect(["-Action", "Encrypt", "-Drive", "C", "-VolumeId", realVolumeId]);
+    assert.notEqual(r.exitCode, 0);
+    assert.equal(r.status.code, "system-disk");
+    assert.match(r.status.error, /unidad de Windows/);
+  }
+);
+
+test(
+  "ayudante real: -Action Lock sobre C: con su VolumeId REAL también se rechaza (system-disk)",
+  { skip: process.platform !== "win32" },
+  () => {
+    const realVolumeId = execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", "(Get-Volume -DriveLetter C).UniqueId"],
+      { encoding: "utf-8" }
+    ).trim();
+    const r = runHelperDirect(["-Action", "Lock", "-Drive", "C", "-VolumeId", realVolumeId]);
+    assert.notEqual(r.exitCode, 0);
+    assert.equal(r.status.code, "system-disk");
+  }
+);
+
+test(
+  "ayudante real: una letra que no existe (Q:) falla como 'missing', sin abrir ningún diálogo",
+  { skip: process.platform !== "win32" },
+  () => {
+    const r = runHelperDirect([
+      "-Action",
+      "Encrypt",
+      "-Drive",
+      "Q",
+      "-VolumeId",
+      "\\\\?\\Volume{12345678-9abc-def0-1234-56789abcdef0}\\",
+    ]);
+    assert.notEqual(r.exitCode, 0);
+    assert.equal(r.status.code, "missing");
+  }
+);

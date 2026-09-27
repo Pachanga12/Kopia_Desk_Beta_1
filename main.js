@@ -5,15 +5,12 @@ const path = require("path");
 // "original-fs": el fs sin el parche de Electron que trata los .asar como
 // carpetas (ver lib/core.js). Las rutas del backup pueden contener .asar.
 const fs = require("original-fs");
-const zlib = require("zlib");
-const { pipeline } = require("stream/promises");
 const {
   BACKUP_ROOT,
   DEFAULT_EXCLUDES,
   safeName,
   safePath,
   isInside,
-  tmpPathFor,
   atomicWriteFileSync,
   readJsonWithFallback,
   compileExcludePatterns,
@@ -22,6 +19,8 @@ const {
   hashFileAsync,
   quickHashFile,
   copyFileVerified,
+  restoreFileVerified,
+  writeVersionAtomic,
   ContentIndex,
   copyOneTask,
   listDrives,
@@ -31,6 +30,7 @@ const {
   bitlockerHelperPath,
   launchBitLockerHelper,
   checkBitLockerTarget,
+  driveIdentityChanged,
   isProtectedSystemVolume,
   readHelperStatus,
   isProcessAlive,
@@ -47,6 +47,14 @@ const {
 
 const METADATA_DIR = ".kopia-data";
 const BACKUP_CONCURRENCY = 3;
+// content-index.json también se guarda cada tantos archivos copiados, no sólo
+// al final del lote: si el proceso se corta a mitad de un backup grande, los
+// archivos ya copiados y journalados quedan completos igual, pero sin este
+// guardado periódico el índice en disco no se enteraba de ellos y se perdía
+// la oportunidad de deduplicarlos la próxima vez (no se pierde nada, sólo se
+// vuelve a copiar en vez de enlazar). Cada cuántos archivos es un balance
+// entre acotar esa ventana y no hacer un fsync de más por archivo.
+const INDEX_SAVE_INTERVAL = 25;
 
 const QUICK_FOLDERS = [
   { key: "pictures", name: "Imágenes" },
@@ -170,6 +178,25 @@ async function assertDestRoot(destRoot) {
   if (!allowed.destRoots.has(key)) await refreshDrives();
   if (!allowed.destRoots.has(key)) throw new Error("Disco destino no reconocido: " + destRoot);
   return key;
+}
+
+// Auditoría: assertDestRoot sólo confirma que la LETRA sigue montada, nunca
+// que sea el MISMO disco físico. Sin esto, cambiar el USB a mitad de un
+// backup grande por otro con la misma letra hacía que el resto de los
+// archivos se copiaran al disco nuevo sin ningún aviso. Se llama una vez por
+// lote (no por archivo: refreshDrives() lanza PowerShell de verdad, no tiene
+// sentido pagar ese costo por cada archivo). `expectedVolumeId` es opcional
+// a propósito: llamadas viejas/sin ese dato simplemente no quedan cubiertas,
+// en vez de romper.
+async function assertDestVolumeUnchanged(destKey, expectedVolumeId) {
+  if (!expectedVolumeId) return;
+  const drives = await refreshDrives();
+  if (driveIdentityChanged(drives, destKey[0], expectedVolumeId)) {
+    throw new Error(
+      `El disco ${destKey} cambió desde que lo elegiste (se desconectó o se conectó otro con la misma letra). ` +
+        "No se copió nada más en este lote para no mezclar dos discos distintos en el mismo backup. Volvé a elegirlo."
+    );
+  }
 }
 
 function allowSource(p) {
@@ -359,12 +386,17 @@ ipcMain.handle("sources:remember", async (_event, destRoot, sourceName, sourcePa
 
 ipcMain.handle("sources:known-paths", async (_event, destRoot) => {
   const key = await assertDestRoot(destRoot);
-  const map = readJsonWithFallback(sourcesMapPath(key), null).data;
+  const loaded = readJsonWithFallback(sourcesMapPath(key), null);
+  const map = loaded.data;
   // Vienen del disco de backup, no de una elección del usuario: se permiten
   // sólo para listar nombres/tamaños en Comparar, no para leer contenido.
   for (const p of Object.values(map)) {
     if (typeof p === "string" && p) allowed.comparePaths.add(pathKey(p));
   }
+  // Auditoría: un sources.json dañado antes se volvía {} en silencio (se
+  // perdía el recordatorio de carpeta local por backup, sin avisar). No es
+  // un nombre de carpeta real (los nombres de carpeta no empiezan con "__").
+  if (loaded.source === "corrupt") map.__corrupt = true;
   return map;
 });
 
@@ -532,6 +564,7 @@ ipcMain.handle("backup:copy-files", async (event, tasks, options = {}) => {
   if (!total) return { copied, errors, deduped, done };
 
   const destKey = await assertDestRoot(tasks[0].destRoot);
+  await assertDestVolumeUnchanged(destKey, options.destVolumeId);
 
   // Se valida TODO antes de copiar nada: una tarea inválida se informa como
   // error y no se copia; las demás siguen.
@@ -566,6 +599,7 @@ ipcMain.handle("backup:copy-files", async (event, tasks, options = {}) => {
       copied++;
       done.push({ relativeDest: task.relativeDest, hash: result.hash });
       if (journalPath) appendJournalDone(journalPath, task.relativeDest);
+      if (copied % INDEX_SAVE_INTERVAL === 0) saveContentIndex(destKey, ctx.index);
       event.sender.send("progress", {
         phase: "backup",
         current: copied,
@@ -601,43 +635,62 @@ ipcMain.handle("backup:copy-files", async (event, tasks, options = {}) => {
 
 // --- Copia de versiones anteriores (comprimidas con gzip) ------------------
 
-async function writeVersionAtomic(srcPath, destPath) {
-  await fs.promises.mkdir(path.dirname(destPath), { recursive: true });
-  const tmp = tmpPathFor(destPath);
-  try {
-    await pipeline(fs.createReadStream(srcPath), zlib.createGzip(), fs.createWriteStream(tmp));
-    await fs.promises.rename(tmp, destPath);
-  } catch (err) {
-    await fs.promises.unlink(tmp).catch(() => {});
-    throw err;
-  }
-}
-
 // Guarda la versión ANTERIOR de cada archivo cambiado: se llama antes de
 // sobrescribir el backup, comprimiendo el archivo que está por reemplazarse.
-ipcMain.handle("backup:copy-versions", async (_event, tasks) => {
+// Igual que backup:copy-files, se planifica en el journal: sin esto, un corte
+// a mitad de escribir una versión dejaba un ".kopia-tmp" que journal:peek/
+// journal:check nunca veían (no está en la carpeta de backup normal) y
+// quedaba huérfano para siempre.
+ipcMain.handle("backup:copy-versions", async (_event, tasks, options = {}) => {
   if (!Array.isArray(tasks)) throw new Error("Lista de tareas no válida.");
-  let copied = 0;
-  let skipped = 0;
   const errors = [];
+  if (!tasks.length) return { copied: 0, skipped: 0, errors };
 
+  const destKey = await assertDestRoot(tasks[0].destRoot);
+  await assertDestVolumeUnchanged(destKey, options.destVolumeId);
+  const validTasks = [];
   for (const task of tasks) {
     try {
-      const destKey = await assertDestRoot(task.destRoot);
+      if ((await assertDestRoot(task.destRoot)) !== destKey) throw new Error("Tareas con distinto disco destino.");
       assertInsideBackup(task.srcPath);
       const target = assertBackupRelative(destKey, task.relativeDest + ".gz", path.join(METADATA_DIR, "versions"));
-      if (!fs.existsSync(task.srcPath)) {
-        // El manifiesto lo conocía pero el backup no lo tiene (p. ej. backup
-        // viejo movido a mano): no hay versión previa que preservar.
-        skipped++;
-        continue;
-      }
-      await writeVersionAtomic(task.srcPath, target);
-      copied++;
+      validTasks.push({ ...task, target, journalRelative: path.relative(destKey, target) });
     } catch (err) {
       errors.push({ file: String(task && task.relativeDest), error: err.message });
     }
   }
+
+  // El manifiesto conocía el archivo pero ya no está en el backup (p. ej. se
+  // movió a mano): no hay versión previa que preservar. No entra al journal
+  // porque nunca se va a escribir nada para él.
+  const writableTasks = [];
+  let skipped = 0;
+  for (const task of validTasks) {
+    if (fs.existsSync(task.srcPath)) writableTasks.push(task);
+    else skipped++;
+  }
+
+  const journalPath = startJournal(
+    journalDir(destKey),
+    writableTasks.map((t) => ({ relativeDest: t.journalRelative }))
+  );
+
+  let copied = 0;
+  for (const task of writableTasks) {
+    try {
+      await writeVersionAtomic(task.srcPath, task.target);
+      copied++;
+      if (journalPath) appendJournalDone(journalPath, task.journalRelative);
+    } catch (err) {
+      errors.push({ file: String(task.relativeDest), error: err.message });
+    }
+  }
+
+  if (journalPath) {
+    checkJournals(journalDir(destKey), destKey);
+    finishJournal(journalPath);
+  }
+
   return { copied, skipped, errors };
 });
 
@@ -678,7 +731,18 @@ ipcMain.handle("restore:scan", async (event, backupDrive, sourceName, localFolde
 
   for (const [relativePath, fileInfo] of Object.entries(manifest)) {
     checked++;
-    const backupFilePath = path.join(backupDir, relativePath);
+    // Si el manifiesto fue manipulado (o quedó corrupto de un modo que
+    // igual parsea como JSON válido), una clave como "../../secreto" no debe
+    // usarse para mirar fuera de la carpeta del backup ni para filtrar si
+    // algo existe en el resto del disco. Se trata igual que "no está en el
+    // backup": no se puede restaurar de forma segura desde acá.
+    let backupFilePath;
+    try {
+      backupFilePath = safePath(backupDir, relativePath);
+    } catch {
+      lostFromBackup.push({ ...fileInfo, path: relativePath });
+      continue;
+    }
     const existsInLocal = localFiles[relativePath] != null;
     const existsInBackup = fs.existsSync(backupFilePath);
 
@@ -721,8 +785,9 @@ ipcMain.handle("restore:copy-files", async (event, files, targetDir, options = {
       assertInsideBackup(file.backupFullPath);
       const dest = safePath(targetDir, file.path);
       await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-      // Misma copia verificada que el backup: temporal + SHA-256 + rename.
-      await copyFileVerified(file.backupFullPath, dest);
+      // Misma copia verificada que el backup, más el chequeo contra el hash
+      // del manifiesto (ver comentario de restoreFileVerified en core.js).
+      await restoreFileVerified(file.backupFullPath, dest, file.hash);
       copied++;
       event.sender.send("progress", {
         phase: "restore",
@@ -767,11 +832,21 @@ ipcMain.handle("restore:full-list", async (_event, backupDrive, sourceName) => {
   const key = await assertDestRoot(backupDrive);
   const { manifest } = readManifestForRestore(key, sourceName);
   const backupDir = path.join(key, BACKUP_ROOT, safeName(sourceName));
-  return Object.entries(manifest).map(([relativePath, fileInfo]) => ({
-    ...fileInfo,
-    path: relativePath,
-    backupFullPath: path.join(backupDir, relativePath),
-  }));
+  const result = [];
+  for (const [relativePath, fileInfo] of Object.entries(manifest)) {
+    // Mismo motivo que en restore:scan: una clave de manifiesto manipulada no
+    // debe poder resolverse a una ruta fuera de la carpeta del backup, ni
+    // siquiera para listarla (restore:copy-files la rechazaría igual al
+    // restaurar, pero no hace falta ofrecerla como si fuera válida).
+    let backupFullPath;
+    try {
+      backupFullPath = safePath(backupDir, relativePath);
+    } catch {
+      continue;
+    }
+    result.push({ ...fileInfo, path: relativePath, backupFullPath });
+  }
+  return result;
 });
 
 function settingsPath() {
@@ -779,12 +854,18 @@ function settingsPath() {
 }
 
 ipcMain.handle("settings:load", async () => {
-  const settings = readJsonWithFallback(settingsPath(), null).data;
+  const loaded = readJsonWithFallback(settingsPath(), null);
+  const settings = loaded.data;
   // La configuración sólo se guarda con orígenes ya autorizados (ver
   // settings:save), así que los orígenes recordados vuelven a permitirse.
   if (Array.isArray(settings.sources)) {
     settings.sources.forEach((s) => s && allowSource(s.path));
   }
+  // Auditoría: un settings.json dañado antes se volvía {} en silencio (se
+  // perdían orígenes recordados y preferencias sin avisar). No es un campo
+  // real de la configuración (empieza con "__" y saveState() siempre arma un
+  // objeto nuevo al guardar, así que nunca se persiste de vuelta).
+  if (loaded.source === "corrupt") settings.__corrupt = true;
   return settings;
 });
 

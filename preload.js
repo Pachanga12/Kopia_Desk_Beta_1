@@ -33,7 +33,7 @@ contextBridge.exposeInMainWorld("kopiaAPI", {
   journalCheck: (destRoot) => ipcRenderer.invoke("journal:check", destRoot),
 
   backupCopyFiles: (tasks, options) => ipcRenderer.invoke("backup:copy-files", tasks, options),
-  backupCopyVersions: (tasks) => ipcRenderer.invoke("backup:copy-versions", tasks),
+  backupCopyVersions: (tasks, options) => ipcRenderer.invoke("backup:copy-versions", tasks, options),
   logSave: (destRoot, sourceName, report) => ipcRenderer.invoke("log:save", destRoot, sourceName, report),
 
   restoreListSources: (backupDrive) => ipcRenderer.invoke("restore:list-sources", backupDrive),

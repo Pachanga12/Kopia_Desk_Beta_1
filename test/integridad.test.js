@@ -22,12 +22,18 @@ const {
   scanDirectoryRecursive,
   hashFileAsync,
   copyFileVerified,
+  restoreFileVerified,
+  writeVersionAtomic,
   ContentIndex,
   copyOneTask,
   fileSystemInfo,
   parseBitLockerProtection,
   isHomeEdition,
+  startJournal,
+  peekJournals,
+  checkJournals,
 } = require("../lib/core.js");
+const zlib = require("zlib");
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "kopia-integridad-test-"));
@@ -211,6 +217,106 @@ test("copyFileVerified supera un bloqueo real de Windows de 300 ms", { skip: pro
   assert.equal(r.size, fs.statSync(src).size);
 });
 
+// --- writeVersionAtomic (versiones comprimidas) -----------------------------
+
+test("writeVersionAtomic comprime, renombra y no deja temporales", async (t) => {
+  const [dir] = tempDirs(t, 1);
+  const src = path.join(dir, "a.txt");
+  const dest = path.join(dir, "versions", "a.txt.gz");
+  fs.writeFileSync(src, "contenido original ".repeat(1000));
+
+  await writeVersionAtomic(src, dest);
+
+  assert.ok(fs.existsSync(dest));
+  assert.ok(!fs.existsSync(dest + TMP_SUFFIX));
+  assert.equal(zlib.gunzipSync(fs.readFileSync(dest)).toString("utf-8"), "contenido original ".repeat(1000));
+});
+
+test("writeVersionAtomic no deja temporales ni destino a medias si el origen no existe", async (t) => {
+  const [dir] = tempDirs(t, 1);
+  const dest = path.join(dir, "versions", "a.txt.gz");
+  await assert.rejects(writeVersionAtomic(path.join(dir, "no-existe.txt"), dest));
+  assert.ok(!fs.existsSync(dest));
+  assert.ok(!fs.existsSync(dest + TMP_SUFFIX));
+});
+
+// Hallazgo de la PoC de resiliencia: backup:copy-versions (main.js) no
+// planificaba estas escrituras en el journal, asi que un ".kopia-tmp" huerfano
+// de una version interrumpida nunca lo veian journal:peek/journal:check (solo
+// miran la carpeta de journal, no .kopia-data/versions). El arreglo hace que
+// main.js llame a startJournal/appendJournalDone con la ruta REAL final
+// (bajo .kopia-data/versions/<...>.gz), no con la ruta de origen: esto prueba
+// que, planificada asi, el temporal huerfano SI se detecta y se limpia solo.
+test("hallazgo PoC: una version planificada en el journal con su ruta final limpia su temporal huerfano", (t) => {
+  const [destRoot] = tempDirs(t, 1);
+  const target = path.join(destRoot, "KopiaDesk_Backup", ".kopia-data", "versions", "Docs", "a.bin.gz");
+  const journalRelative = path.relative(destRoot, target);
+  const jDir = path.join(destRoot, "KopiaDesk_Backup", ".kopia-data", "journal");
+
+  startJournal(jDir, [{ relativeDest: journalRelative }]);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target + TMP_SUFFIX, "version a medias"); // lo que deja un crash real
+
+  const peek = peekJournals(jDir, destRoot);
+  assert.equal(peek.pendingFiles, 1);
+
+  const result = checkJournals(jDir, destRoot);
+  assert.equal(result.filesCleaned, 1);
+  assert.ok(!fs.existsSync(target + TMP_SUFFIX));
+});
+
+// --- restoreFileVerified: detectar backups corruptos al restaurar (auditoría) ---
+// Hallazgo de la auditoría de restauración: restore:copy-files (main.js) sólo
+// verificaba que la copia restaurada coincidiera con el archivo QUE HAY en el
+// backup, nunca contra el hash que quedó registrado en el manifiesto cuando
+// se respaldó. Si el disco de backup se corrompía después (bit rot), la
+// restauración "tenía éxito" en silencio con datos corruptos. Verificado
+// también end-to-end en la app real con un USB (byte volteado a mano en el
+// archivo ya respaldado, manifiesto con el hash bueno).
+
+test("restoreFileVerified: si el archivo del backup no coincide con el hash del manifiesto, no se entrega en silencio", async (t) => {
+  const [dir] = tempDirs(t, 1);
+  const backupFile = path.join(dir, "backup", "A.txt");
+  const dest = path.join(dir, "restaurado", "A.txt");
+  fs.mkdirSync(path.dirname(backupFile), { recursive: true });
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(backupFile, "contenido CORRUPTO (bit rot)");
+
+  const hashOriginalBueno = "hash-que-quedo-en-el-manifiesto-cuando-se-respaldo";
+  await assert.rejects(
+    restoreFileVerified(backupFile, dest, hashOriginalBueno),
+    (err) => err.code === "BACKUP_CORRUPTED" && /no coincide/.test(err.message)
+  );
+  assert.ok(!fs.existsSync(dest), "no debe quedar un archivo corrupto en el destino de restauración");
+});
+
+test("restoreFileVerified: si el hash coincide, restaura normalmente", async (t) => {
+  const [dir] = tempDirs(t, 1);
+  const backupFile = path.join(dir, "backup", "A.txt");
+  const dest = path.join(dir, "restaurado", "A.txt");
+  fs.mkdirSync(path.dirname(backupFile), { recursive: true });
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(backupFile, "contenido bueno");
+  const goodHash = await hashFileAsync(backupFile);
+
+  const result = await restoreFileVerified(backupFile, dest, goodHash);
+  assert.equal(result.hash, goodHash);
+  assert.equal(fs.readFileSync(dest, "utf-8"), "contenido bueno");
+});
+
+test("restoreFileVerified: sin hash esperado (manifiesto legado), restaura sin comparar", async (t) => {
+  const [dir] = tempDirs(t, 1);
+  const backupFile = path.join(dir, "backup", "A.txt");
+  const dest = path.join(dir, "restaurado", "A.txt");
+  fs.mkdirSync(path.dirname(backupFile), { recursive: true });
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(backupFile, "contenido de un manifiesto viejo sin hash");
+
+  const result = await restoreFileVerified(backupFile, dest, undefined);
+  assert.equal(fs.readFileSync(dest, "utf-8"), "contenido de un manifiesto viejo sin hash");
+  assert.ok(result.hash);
+});
+
 // --- Problema 2: sobrescribir un hardlink no altera sus otros enlaces --------------
 
 test("problema 2: sobrescribir un archivo enlazado no cambia el contenido de sus enlaces", async (t) => {
@@ -319,6 +425,55 @@ test("copyOneTask rechaza archivos más grandes que el límite del sistema de ar
     (err) => err.code === "FILE_TOO_LARGE"
   );
   assert.ok(!fs.existsSync(path.join(destRoot, "KopiaDesk_Backup", "g.bin")));
+});
+
+// --- Hallazgo PoC: content-index.json sólo se guardaba al final del lote -------
+// backup:copy-files (main.js) guarda el índice de contenido con
+// atomicWriteFileSync + JSON.stringify (igual que acá abajo, sólo que ahí
+// tiene nombres propios: loadContentIndex/saveContentIndex). Antes del
+// arreglo sólo se llamaba una vez, al final de TODO el lote: un crash a mitad
+// dejaba el índice en disco sin ninguna actualización del lote, aunque los
+// archivos ya copiados y journalados quedaran completos. El arreglo lo guarda
+// también cada N archivos. Esto reproduce ese patrón (guardar cada N) y
+// confirma que acota la ventana de perdida en vez de perderla toda.
+
+function saveIndex(fp, index) {
+  atomicWriteFileSync(fp, JSON.stringify(index));
+}
+function loadIndex(fp) {
+  return new ContentIndex(readJsonWithFallback(fp, null).data);
+}
+
+test("guardar el indice cada N archivos (no sólo al final) acota, en vez de perder todo, lo que un crash puede costar en dedup", async (t) => {
+  const [destRoot, srcDir] = tempDirs(t, 2);
+  const indexPath = path.join(destRoot, "content-index.json");
+  const N = 2; // INDEX_SAVE_INTERVAL en esta prueba
+
+  const index = new ContentIndex();
+  const pendingWrites = new Map();
+  let copied = 0;
+  for (const name of ["A.bin", "B.bin", "C.bin"]) {
+    const src = path.join(srcDir, name);
+    fs.writeFileSync(src, "contenido de " + name);
+    await copyOneTask({ srcPath: src, destRoot, relativeDest: "KopiaDesk_Backup/Docs/" + name, dedup: true }, { index, pendingWrites });
+    copied++;
+    if (copied % N === 0) saveIndex(indexPath, index); // el guardado periodico del arreglo
+  }
+  // "Crash" antes del guardado final: C.bin nunca llega a persistirse en el
+  // indice de disco, pero A.bin y B.bin si (se guardaron en el intermedio).
+
+  const reloaded = loadIndex(indexPath);
+  const hashA = [...index.byHash.entries()].find(([, v]) => v.path.endsWith("A.bin"))[0];
+  const hashC = [...index.byHash.entries()].find(([, v]) => v.path.endsWith("C.bin"))[0];
+
+  assert.ok(reloaded.get(hashA), "A.bin (guardado en el intermedio) debe seguir en el indice recargado");
+  assert.equal(reloaded.get(hashC), null, "C.bin (posterior al ultimo guardado) se pierde del indice, como se espera");
+
+  // Y lo mas importante: los 3 archivos siguen completos en el disco pase lo
+  // que pase con el indice — perder una entrada del indice nunca pierde datos.
+  for (const name of ["A.bin", "B.bin", "C.bin"]) {
+    assert.ok(fs.existsSync(path.join(destRoot, "KopiaDesk_Backup/Docs/" + name)));
+  }
 });
 
 // --- Informe de escaneo ---------------------------------------------------------

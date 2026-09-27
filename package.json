@@ -1,6 +1,6 @@
 {
   "name": "kopia-desk",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Kopia Desk v2: copias de seguridad incrementales para Windows, con copia verificada y cifrado BitLocker del disco destino",
   "homepage": "https://github.com/Pachanga12/Kopia-Desk-v2.1#readme",
   "repository": {
@@ -14,7 +14,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "lint": "node --check main.js && node --check preload.js && node --check lib/core.js && node --check renderer/app.js",
+    "lint": "node --check main.js && node --check preload.js && node --check lib/core.js && node --check renderer/compare.js && node --check renderer/app.js",
     "build": "electron-builder --win"
   },
   "author": "Pachanga12",

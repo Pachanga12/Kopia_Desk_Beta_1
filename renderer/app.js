@@ -406,6 +406,10 @@ async function loadComparePreview() {
     }
 
     const knownPaths = await window.kopiaAPI.knownSourcePaths(state.destination.root).catch(() => ({}));
+    if (knownPaths.__corrupt) {
+      log("Atención: el registro de orígenes conocidos (sources.json) está dañado; " +
+        "vas a tener que elegir de nuevo la carpeta local de cada backup para restaurar.");
+    }
     state.compareSources = sources;
     sources.forEach((sourceName) => {
       state.compareSelection[sourceName] = { checked: false, localPath: knownPaths[sourceName] || null };
@@ -1133,63 +1137,8 @@ els.journalSkipBtn.addEventListener("click", () => {
   log("Limpieza pospuesta. Se volverá a avisar la próxima vez que elijas este disco.");
 });
 
-// Decide qué cambió contra el último manifiesto.
-//   - Tamaño distinto: cambiado.
-//   - Mismo tamaño y fecha distinta: SHA-256 completo contra el guardado. El
-//     hash rápido (cabecera+cola) no ve ediciones en el medio del archivo
-//     (bases de datos, .pst, discos virtuales), así que ya no decide nada.
-//     Si el manifiesto es de una versión anterior y no tiene SHA-256, se
-//     recopia una vez para registrarlo.
-//   - Con `deep`, también se hashean los que conservan tamaño y fecha.
-// El SHA-256 de lo que se copia lo calcula la propia copia verificada, así que
-// los nuevos y los de tamaño distinto no se leen dos veces.
-// Los que sólo cambiaron de fecha con el mismo contenido van a `touchedFiles`
-// para actualizar su fecha en el manifiesto y no volver a hashearlos.
-async function compareManifests(current, previous, deep) {
-  const newFiles = [];
-  const changedFiles = [];
-  const missingFiles = [];
-  const touchedFiles = [];
-  const entries = Object.entries(current);
-  let checked = 0;
-
-  for (const [filePath, file] of entries) {
-    checked++;
-    const old = previous[filePath];
-
-    if (!old) {
-      newFiles.push(file);
-      continue;
-    }
-
-    let changed = old.size !== file.size;
-    const dateChanged = old.lastModified !== file.lastModified;
-    if (!changed && (dateChanged || (deep && old.hash))) {
-      if (!old.hash) {
-        changed = true;
-      } else {
-        try {
-          if (checked % 20 === 0) showProgress("Comparando contenido...", checked, entries.length, filePath);
-          file.hash = await window.kopiaAPI.hashFile(file.fullPath);
-          changed = file.hash !== old.hash;
-          if (!changed && dateChanged) touchedFiles.push(file);
-        } catch {
-          changed = true;
-        }
-      }
-    } else if (!changed) {
-      file.hash = old.hash || null;
-    }
-
-    if (changed) changedFiles.push({ ...file, previous: old });
-  }
-
-  for (const [filePath, file] of Object.entries(previous)) {
-    if (!current[filePath]) missingFiles.push(file);
-  }
-
-  return { newFiles, changedFiles, missingFiles, touchedFiles };
-}
+// compareManifests() vive en compare.js (cargado antes que este script en
+// index.html) para poder probarla con `node --test` sin un DOM real.
 
 const SKIP_REASONS = {
   enlace: "Enlace o junction (no se sigue)",
@@ -1243,7 +1192,13 @@ async function scanAll() {
         const scan = await window.kopiaAPI.scanDirectory(source.path, excludePatterns);
         const current = scan.files;
 
-        const diff = await compareManifests(current, previous, els.hashToggle.checked);
+        const diff = await compareManifests(
+          current,
+          previous,
+          els.hashToggle.checked,
+          window.kopiaAPI.hashFile,
+          (checked, total, filePath) => showProgress("Comparando contenido...", checked, total, filePath)
+        );
 
         const skipped = scan.skipped.map((s) => ({ path: s.path, detail: SKIP_REASONS[s.reason] || s.reason }));
 
@@ -1577,7 +1532,9 @@ async function backupAll() {
 
       if (tasks.length) {
         if (versionTasks.length) {
-          const versionResult = await window.kopiaAPI.backupCopyVersions(versionTasks);
+          const versionResult = await window.kopiaAPI.backupCopyVersions(versionTasks, {
+            destVolumeId: state.destination.volumeId,
+          });
           if (versionResult.copied > 0) {
             log(
               comparison.sourceName + ": " + versionResult.copied +
@@ -1589,7 +1546,11 @@ async function backupAll() {
           }
         }
 
-        const result = await window.kopiaAPI.backupCopyFiles(tasks, { dedup, concurrency });
+        const result = await window.kopiaAPI.backupCopyFiles(tasks, {
+          dedup,
+          concurrency,
+          destVolumeId: state.destination.volumeId,
+        });
         totalCopied += result.copied;
         totalDeduped += result.deduped || 0;
         (result.done || []).forEach((d) => doneHashes.set(d.relativeDest, d.hash));
@@ -2114,6 +2075,10 @@ async function loadState() {
 
     const settings = await window.kopiaAPI.loadSettings();
     if (!settings) return;
+    if (settings.__corrupt) {
+      log("Atención: la configuración guardada (kopia-desk-settings.json) estaba dañada; " +
+        "se restablecieron los valores por defecto (orígenes recordados, exclusiones, etc.).");
+    }
 
     if (settings.sources && settings.sources.length) {
       for (const s of settings.sources) {

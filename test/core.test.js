@@ -16,7 +16,6 @@ const {
   scanDirectoryRecursive,
   hashFileAsync,
   quickHashFile,
-  copyFileReplacing,
   pickConcurrency,
   startJournal,
   appendJournalDone,
@@ -24,6 +23,8 @@ const {
   peekJournals,
   checkJournals,
   TMP_SUFFIX,
+  detectDriveType,
+  getEncryptionStatus,
 } = require("../lib/core.js");
 
 function makeTempDir() {
@@ -223,42 +224,6 @@ test("quickHashFile funciona con archivos más grandes que el bloque de 64 KB", 
   assert.equal(hash1, hash2);
 });
 
-// --- copyFileReplacing -----------------------------------------------------
-
-test("copyFileReplacing no corrompe un archivo hardlinkeado al reemplazar el destino", async (t) => {
-  const dir = makeTempDir();
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-
-  // a.txt y b.txt son el mismo inodo (como los deja la deduplicación por
-  // hardlinks). Sobreescribir a.txt "en el sitio" (fs.copyFile sin más)
-  // mutaría también el contenido de b.txt, aunque su origen nunca cambió.
-  const fileA = path.join(dir, "a.txt");
-  const fileB = path.join(dir, "b.txt");
-  fs.writeFileSync(fileA, "contenido original");
-  fs.linkSync(fileA, fileB);
-
-  const nuevoOrigen = path.join(dir, "nuevo.txt");
-  fs.writeFileSync(nuevoOrigen, "contenido nuevo");
-
-  await copyFileReplacing(nuevoOrigen, fileA);
-
-  assert.equal(fs.readFileSync(fileA, "utf-8"), "contenido nuevo");
-  assert.equal(fs.readFileSync(fileB, "utf-8"), "contenido original", "b.txt no debía cambiar");
-});
-
-test("copyFileReplacing funciona igual si el destino todavía no existe", async (t) => {
-  const dir = makeTempDir();
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-
-  const src = path.join(dir, "src.txt");
-  const dest = path.join(dir, "nuevo", "dest.txt");
-  fs.writeFileSync(src, "hola");
-  fs.mkdirSync(path.dirname(dest));
-
-  await copyFileReplacing(src, dest);
-  assert.equal(fs.readFileSync(dest, "utf-8"), "hola");
-});
-
 test("hashFileAsync calcula un SHA-256 completo y determinista", async (t) => {
   const dir = makeTempDir();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -414,3 +379,47 @@ test("pickConcurrency: disco desconocido usa valores intermedios", () => {
   assert.equal(pickConcurrency({ mediaType: "Unknown", busType: "Unknown" }, 1024), 4);
   assert.equal(pickConcurrency({ mediaType: "Unknown", busType: "Unknown" }, 10 * 1024 * 1024), 2);
 });
+
+// --- Inyección en argumentos de PowerShell (auditoría, sección 5/8) --------------
+// detectDriveType() y getEncryptionStatus() arman el script de PowerShell con
+// un template string que interpola la letra de unidad directo (sin psQuote,
+// a diferencia de buildHelperLaunchScript). Son seguros igual, por dos motivos
+// distintos:
+//   - detectDriveType: la letra sale de `/^([A-Za-z])/.exec(driveRoot)` (sólo
+//     ancla el INICIO): la captura es siempre un único carácter alfabético,
+//     así que el resto de un driveRoot manipulado se descarta sin más.
+//   - getEncryptionStatus: la regex ancla inicio Y fin
+//     (`/^([A-Za-z]):?[\\/]?$/`), así que cualquier texto extra hace fallar el
+//     match completo y el script ni se arma (retorno anticipado).
+// Estos tests lo demuestran de verdad (no sólo leyendo la regex): un intento
+// real de inyección no crea el archivo que intenta crear.
+
+test(
+  "detectDriveType: un driveRoot con intento de inyección de PowerShell no ejecuta nada extra",
+  soloWindows,
+  async () => {
+    const marker = path.join(os.tmpdir(), "kopia-injection-marker-detect-" + Date.now() + ".txt");
+    const malicious = `C'; New-Item -Path '${marker.replace(/'/g, "''")}' -ItemType File -Force | Out-Null; '`;
+    await detectDriveType(malicious); // no debe lanzar, y sobre todo no debe ejecutar el New-Item
+    assert.ok(!fs.existsSync(marker), "el intento de inyección no debe haber creado el archivo marcador");
+  }
+);
+
+test("detectDriveType: driveRoot que no empieza con una letra no ejecuta ningún script", soloWindows, async () => {
+  const marker = path.join(os.tmpdir(), "kopia-injection-marker-noletter-" + Date.now() + ".txt");
+  const malicious = `'; New-Item -Path '${marker.replace(/'/g, "''")}' -ItemType File -Force | Out-Null; '`;
+  const info = await detectDriveType(malicious);
+  assert.deepEqual(info, { mediaType: "Unknown", busType: "Unknown" });
+  assert.ok(!fs.existsSync(marker));
+});
+
+test(
+  "getEncryptionStatus: un driveRoot con intento de inyección de PowerShell no ejecuta nada extra",
+  soloWindows,
+  async () => {
+    const marker = path.join(os.tmpdir(), "kopia-injection-marker-enc-" + Date.now() + ".txt");
+    const malicious = `C'); New-Item -Path '${marker.replace(/'/g, "''")}' -ItemType File -Force | Out-Null; ('`;
+    await getEncryptionStatus(malicious);
+    assert.ok(!fs.existsSync(marker), "el intento de inyección no debe haber creado el archivo marcador");
+  }
+);

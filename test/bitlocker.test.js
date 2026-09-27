@@ -84,6 +84,28 @@ test("parseHelperLaunchOutput distingue éxito, UAC rechazado y otros errores", 
   assert.match(other.error, /No se encuentra/);
 });
 
+// --- Auditoría: la contraseña/clave de recuperación nunca deben poder llegar
+// al StatusFile (que la app lee y podría terminar en logs/depuración) --------
+test("bitlocker-helper.ps1: ningún Write-KdStatus interpola la contraseña, la clave de recuperación o el SecureString", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "lib", "bitlocker-helper.ps1"), "utf-8");
+  const calls = source.match(/Write-KdStatus\s+@\{[^}]*\}/g) || [];
+  assert.ok(calls.length >= 8, "se esperaban varias llamadas a Write-KdStatus para revisar");
+  const forbidden = /\$password\b|\$Key\b|\$secure\b|\$SecurePassword\b|\$RecoveryPassword\b/i;
+  for (const call of calls) {
+    assert.ok(!forbidden.test(call), "Write-KdStatus no debe referenciar secretos: " + call);
+  }
+});
+
+// La línea de comandos con la que se lanza el ayudante (lo único que main.js
+// arma con datos externos) tampoco debe poder llevar nada parecido a un
+// secreto: sólo acción, letra, ruta de status y VolumeId (ver preload.js /
+// buildHelperLaunchScript: encryptDrive() ni siquiera recibe una contraseña
+// como argumento — la pide el propio ayudante en su ventana).
+test("buildHelperLaunchScript: los argumentos lanzados nunca incluyen algo parecido a una contraseña", () => {
+  const script = buildHelperLaunchScript({ ...base, fullDisk: true });
+  assert.ok(!/-Password|-SecurePassword|-RecoveryPassword/i.test(script));
+});
+
 test("readHelperStatus lee el JSON (con o sin BOM) y devuelve null si aún no existe", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kopia-bl-test-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

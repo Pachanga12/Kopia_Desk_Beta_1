@@ -32,7 +32,7 @@ Kopia-Desk-v2.1/
 │
 ├── assets/Kopia_Desk_icon.png ← Icono de la app y del instalador
 │
-├── test/                      ← node --test (83 tests)
+├── test/                      ← node --test (113 tests)
 │   ├── core.test.js           ← Lógica base: rutas, exclusiones, escaneo, hash, journal
 │   ├── integridad.test.js     ← Problemas 1–5: copia atómica, dedup, escrituras atómicas
 │   ├── bitlocker.test.js      ← Lanzamiento del ayudante: argumentos, entrecomillado, estado
@@ -88,6 +88,14 @@ Kopia-Desk-v2.1/
    - destinos de copia dentro de `KopiaDesk_Backup` y fuera de `.kopia-data`;
      versiones sólo dentro de `.kopia-data\versions`;
    - rutas de `sources.json` del disco: sólo para listar en "Comparar".
+   - identidad del disco destino: `backup:copy-files`/`backup:copy-versions`
+     reciben opcionalmente `options.destVolumeId` (el `volumeId` que el
+     renderer tenía al elegir el disco) y lo comparan contra el real al
+     empezar el lote (`assertDestVolumeUnchanged`); si no coincide, se rechaza
+     todo el lote sin copiar nada más. Sin esto, cambiar el USB a mitad de un
+     backup grande por otro con la misma letra escribía el resto en el disco
+     nuevo sin ningún aviso. Se chequea una vez por lote (una llamada
+     `refreshDrives()` real), no por archivo.
 3. **Manifiestos, índice, configuración y logs** se escriben con
    `atomicWriteFileSync` (temporal + `fsync` + `rename`). Al leer un manifiesto
    dañado se usa `.prev.json` y se avisa; `.prev.json` sólo se actualiza desde un
@@ -96,8 +104,19 @@ Kopia-Desk-v2.1/
    índice de contenido, copia con `copyOneTask` y concurrencia adaptativa,
    registra el journal y devuelve `done` (ruta + SHA-256 de lo copiado y
    verificado). La interfaz sólo registra en el manifiesto lo que está en `done`.
-5. **Versiones**: la versión anterior se comprime con gzip a un temporal y se
-   renombra (también atómico).
+   `content-index.json` se guarda cada `INDEX_SAVE_INTERVAL` (25) archivos
+   copiados, además de al final: si el proceso se corta a mitad de un lote
+   grande, los archivos ya copiados y journalados quedan completos igual, pero
+   sin este guardado periódico el índice en disco no se enteraba de ellos y se
+   perdía la oportunidad de deduplicarlos en el próximo backup (no se pierden
+   datos, sólo se copia en vez de enlazar hasta el siguiente backup completo).
+5. **Versiones** (`backup:copy-versions`): la versión anterior se comprime con
+   gzip a un temporal y se renombra (`writeVersionAtomic`, en `lib/core.js`),
+   planificada en el journal igual que `backup:copy-files` (con la ruta real
+   final bajo `.kopia-data/versions/`, no la ruta de origen). Antes no pasaba
+   por el journal: un corte a mitad de comprimir una versión dejaba un
+   `.kopia-tmp` que `journal:peek`/`journal:check` nunca veían (sólo miran la
+   carpeta de journal), y quedaba huérfano para siempre.
 6. **Restauración**: misma copia verificada que el backup.
 7. **BitLocker**: estado sin elevación; cifrar y bloquear lanzan el ayudante
    elevado tras releer los discos y comprobar identidad de volumen y disco del
@@ -120,7 +139,7 @@ Kopia-Desk-v2.1/
 | `journal:peek` / `journal:check` | Detectar / limpiar un backup interrumpido |
 | `backup:plan-concurrency` | Tipo de disco y concurrencia sugerida |
 | `backup:copy-files` | Copia verificada con dedup, journal y progreso |
-| `backup:copy-versions` | Versiones anteriores comprimidas |
+| `backup:copy-versions` | Versiones anteriores comprimidas, con journal |
 | `log:save` | Log JSON de la operación (copiados, fallidos, omitidos) |
 | `restore:scan` / `restore:full-list` / `restore:list-sources` / `restore:copy-files` | Comparar y restaurar |
 | `encryption:status` | Estado BitLocker sin elevación + `systemProtected` |
@@ -143,13 +162,16 @@ Kopia-Desk-v2.1/
   origen y del temporal en paralelo, comprobación de que el origen no cambió,
   fechas preservadas, `rename`), con hasta 3 reintentos con espera creciente
   ante bloqueos pasajeros (`EBUSY`, `EAGAIN`, `ETXTBSY`) o una verificación
-  fallida, siempre sobre el temporal; `linkAtomic`, `copyOneTask`.
+  fallida, siempre sobre el temporal; `linkAtomic`, `copyOneTask`,
+  `writeVersionAtomic` (mismo patrón temporal + `rename`, pero con gzip).
 - **Deduplicación**: `ContentIndex` (hash → ruta y ruta → hashes; toda escritura
   olvida los hashes viejos de esa ruta), `indexEntryMatches` (verifica por
   tamaño y SHA-256 antes de enlazar).
 - **Discos**: `listDrives` (con disco físico, disco del sistema e ID de volumen),
-  `isProtectedSystemVolume`, `checkBitLockerTarget`, `fileSystemInfo` (FAT32,
-  exFAT), `detectDriveType`, `pickConcurrency` (un archivo a la vez en pendrives).
+  `isProtectedSystemVolume`, `checkBitLockerTarget`, `driveIdentityChanged`
+  (mismo chequeo de identidad que `checkBitLockerTarget`, pero para backups
+  normales), `fileSystemInfo` (FAT32, exFAT), `detectDriveType`,
+  `pickConcurrency` (un archivo a la vez en pendrives).
 - **BitLocker**: `getEncryptionStatus` (propiedad de shell, sin elevación),
   `buildHelperLaunchScript` / `launchBitLockerHelper`, `readHelperStatus`,
   `isProcessAlive`, `unlockWithWindowsPrompt`.
@@ -236,7 +258,7 @@ E:\KopiaDesk_Backup\
 - `npm run lint` comprueba la sintaxis de los archivos principales (`node --check`).
 - Los estilos van siempre en `renderer/styles.css`: la CSP (`style-src 'self'`)
   bloquea los atributos `style="..."` del HTML (por eso existen utilidades como `.mt-14`).
-- `npm test` corre los 83 tests con `node --test`; no requiere Electron. El test
+- `npm test` corre los 113 tests con `node --test`; no requiere Electron. El test
   del ayudante de PowerShell sólo corre en Windows.
 - Con npm 11 o posterior el binario de Electron no se descarga solo: ejecutar una
   vez `node node_modules/electron/install.js`.
