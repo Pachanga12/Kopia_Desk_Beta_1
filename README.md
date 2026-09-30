@@ -16,14 +16,14 @@ Kopia Desk es un proyecto independiente. No tiene relación con [Kopia](https://
 
 ## Descargar
 
-El instalador para Windows está en **[Releases](https://github.com/Pachanga12/Kopia_Desk_Beta_1/releases/latest)**: descarga `Kopia.Desk.v3.Setup.3.0.0.exe` y ejecútalo. Si no quieres instalar nada, `Kopia.Desk.v3.Portable.3.0.0.exe` se abre directamente.
+El instalador para Windows está en **[Releases](https://github.com/Pachanga12/Kopia_Desk_Beta_1/releases/latest)**: descarga `Kopia.Desk.v3.Setup.3.0.1.exe` y ejecútalo. Si no quieres instalar nada, `Kopia.Desk.v3.Portable.3.0.1.exe` se abre directamente.
 
 - El instalador **no está firmado**: Windows SmartScreen puede mostrar "Windows protegió su PC". Pulsa **Más información → Ejecutar de todas formas**.
 - **Instalar** es un asistente en español: bienvenida, licencia (hay que marcar **"Acepto los términos de la licencia"** para seguir; se muestra la traducción al español y el original en inglés) y final con **"Abrir Kopia Desk ahora"** y **"Crear acceso directo en el escritorio"** (marcadas). Se instala solo para tu usuario, sin pedir permiso de administrador.
 - **Desinstalar** (desde "Agregar o quitar programas") pide confirmación, recuerda que **los backups de tus discos no se borran**, ofrece **"Borrar también mi configuración"** (desmarcada) y termina con "Muchas gracias por usar Kopia Desk". También quita el acceso directo del escritorio.
 - Nada de la app pide permiso de administrador, tampoco cifrar las copias.
 - Para más detalle técnico del código, ver [docs/arquitectura.md](docs/arquitectura.md).
-- Página del producto: [web/index.html](web/index.html) (HTML, CSS y JS sin compilar; se abre con doble clic y se puede publicar tal cual, por ejemplo con GitHub Pages).
+- Página del producto: **https://pachanga12.github.io/Kopia-Desk/** (código en [web/](web/index.html): HTML, CSS y JS sin compilar; se publica desde el repositorio Kopia-Desk).
 
 ---
 
